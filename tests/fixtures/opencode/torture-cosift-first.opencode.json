@@ -1,0 +1,25 @@
+{
+  // KEEPME-TOP: cosift is the FIRST key of "mcp" here, so removing it must
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "cosift": {
+      "type": "remote",
+      "url": "__MCP_URL__",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer __STALE_TOKEN__"
+      }
+    },
+    "weather": {
+      "type": "remote",
+      "url": "https://weather.example.com/mcp",
+      "enabled": true,
+      "headers": {
+        "X-Weather-Note": "KEEPME-STRING brace { and } and \" quote and // not-a-comment and /* not-a-block */ end"
+      }
+    }
+  },
+  /* KEEPME-BLOCK */
+  "theme": "opencode",
+  "autoshare": false,
+}

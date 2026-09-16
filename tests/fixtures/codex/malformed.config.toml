@@ -1,0 +1,4 @@
+model = "gpt-5-codex"
+
+[mcp_servers.weather
+url = "https://weather.example.com/mcp"

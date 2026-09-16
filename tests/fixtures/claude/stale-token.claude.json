@@ -1,0 +1,14 @@
+{
+  "firstStartVersion": "2.1.273",
+  "migrationVersion": 14,
+  "seenNotifications": {},
+  "mcpServers": {
+    "cosift": {
+      "type": "http",
+      "url": "__MCP_URL__",
+      "headers": {
+        "Authorization": "Bearer __STALE_TOKEN__"
+      }
+    }
+  }
+}

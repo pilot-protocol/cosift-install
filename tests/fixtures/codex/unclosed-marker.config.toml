@@ -1,0 +1,15 @@
+model = "gpt-5-codex"
+
+[mcp_servers.weather]
+url = "https://weather.example.com/mcp"
+
+# >>> cosift (managed by cosift-install — do not edit)
+[mcp_servers.cosift]
+url = "__MCP_URL__"
+[mcp_servers.cosift.http_headers]
+Authorization = "Bearer __STALE_TOKEN__"
+
+[profiles.work]
+model = "gpt-5-codex"
+approval_policy = "never"
+notify = ["KEEPME-PROFILE"]

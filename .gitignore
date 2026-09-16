@@ -1,0 +1,23 @@
+# Backups written by install.sh
+*.cosift-backup-*
+
+# Editor and OS scratch
+*.bak
+*.orig
+*.rej
+*~
+.DS_Store
+
+# Test scratch
+tests/tmp/
+tests/scratch/
+tests/**/out/
+*.actual
+*.log
+
+# Local overrides
+.env
+.env.local
+
+# Local staging coordinates for tests/e2e-staging.sh (never published)
+tests/e2e-staging.env

@@ -1,0 +1,20 @@
+{
+  // KEEPME-TOP: valid JSONC, but "broken" below is schema-invalid, so
+  // `opencode mcp list` exits 1 and post-removal validation can never pass.
+  "$schema": "https://opencode.ai/config.json",
+  "theme": "opencode",
+  "mcp": {
+    "cosift": {
+      "type": "remote",
+      "url": "__MCP_URL__",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer __STALE_TOKEN__"
+      }
+    },
+    "broken": {
+      "type": "not-a-real-transport-type"
+    }
+  },
+  "autoshare": false,
+}

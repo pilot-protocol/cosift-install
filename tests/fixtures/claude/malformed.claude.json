@@ -1,0 +1,8 @@
+{
+  "firstStartVersion": "2.1.273",
+  "mcpServers": {
+    "weather": {
+      "type": "http",
+      "url": "https://weather.example.com/mcp"
+    }
+

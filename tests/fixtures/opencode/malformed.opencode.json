@@ -1,0 +1,10 @@
+{
+  "theme": "opencode",
+  "mcp": {
+    "weather": {
+      "type": "remote",
+      "url": "https://weather.example.com/mcp"
+    }
+  }
+  /* KEEPME-UNTERMINATED block comment - this file is not valid JSONC
+}

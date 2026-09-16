@@ -1,0 +1,15 @@
+model = "gpt-5-codex"
+approval_policy = "on-request"
+
+[shell_environment_policy]
+inherit = "core"
+
+[mcp_servers.weather]
+url = "https://weather.example.com/mcp"
+
+[mcp_servers.weather.http_headers]
+X-Weather-Key = "not-a-cosift-token"
+
+[mcp_servers.notes]
+command = "npx"
+args = ["-y", "notes-mcp"]

@@ -1,0 +1,29 @@
+{
+  // KEEPME-TOP: a line comment holding a } brace and a " quote
+  "$schema": "https://opencode.ai/config.json",
+  "theme": "opencode",
+  /* KEEPME-BLOCK: block comment with { and } and "strings"
+     spanning several lines */
+  "instructions": ["./AGENTS.md"],
+  "mcp": {
+    "weather": {
+      "type": "remote",
+      "url": "https://weather.example.com/mcp",
+      "enabled": true,
+      "headers": {
+        "X-Weather-Note": "KEEPME-STRING brace { and } and \" quote and // not-a-comment and /* not-a-block */ end"
+      }
+    },
+    "cosift": {
+      "type": "remote",
+      "url": "__MCP_URL__",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer __STALE_TOKEN__"
+      }
+    }
+  },
+  "model": "anthropic/claude-sonnet-4",
+  // KEEPME-TRAILING: trailing comma below is legal JSONC
+  "autoshare": false,
+}

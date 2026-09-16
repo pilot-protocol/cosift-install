@@ -1,0 +1,20 @@
+{
+  // KEEPME-TOP: hand-written config, comments must survive
+  "$schema": "https://opencode.ai/config.json",
+  "theme": "opencode",
+  /* KEEPME-BLOCK: a block comment containing { braces } and "quotes" */
+  "instructions": ["./AGENTS.md"],
+  "mcp": {
+    "weather": {
+      "type": "remote",
+      "url": "https://weather.example.com/mcp",
+      "enabled": true,
+      "headers": {
+        "X-Weather-Key": "not-a-cosift-token"
+      }
+    }
+  },
+  "model": "anthropic/claude-sonnet-4",
+  // KEEPME-TRAILING: the trailing comma below is legal JSONC
+  "autoshare": false,
+}

@@ -1,0 +1,19 @@
+{
+  // KEEPME-TOP: cosift is the ONLY key of "mcp"
+  "$schema": "https://opencode.ai/config.json",
+  "theme": "opencode",
+  "mcp": {
+    "cosift": {
+      "type": "remote",
+      "url": "__MCP_URL__",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer __STALE_TOKEN__"
+      }
+    }
+  },
+  /* KEEPME-BLOCK with } and { */
+  "model": "anthropic/claude-sonnet-4",
+  // KEEPME-TRAILING
+  "autoshare": false,
+}

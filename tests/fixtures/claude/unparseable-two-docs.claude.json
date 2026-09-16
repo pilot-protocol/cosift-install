@@ -1,0 +1,25 @@
+{
+  "firstStartTime": "2026-01-02T03:04:05.006Z",
+  "firstStartVersion": "2.1.273",
+  "machineID": "fixturemachineid0000000000000000000000000000000000000000000000000",
+  "userID": "fixtureuserid00000000000000000000000000000000000000000000000000",
+  "seenNotifications": {},
+  "migrationVersion": 14,
+  "numStartups": 42,
+  "cosiftFixtureKeep": "KEEPME-CLAUDE-TOPKEY",
+  "projects": {
+    "/home/tester/work": {
+      "allowedTools": ["Bash(git status)"],
+      "history": []
+    }
+  },
+  "mcpServers": {
+    "weather": {
+      "type": "http",
+      "url": "https://weather.example.com/mcp",
+      "headers": {
+        "X-Weather-Key": "not-a-cosift-token"
+      }
+    }
+  }
+}{"stale":1}

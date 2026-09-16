@@ -1,0 +1,8 @@
+model = "gpt-5-codex"
+
+[ mcp_servers.cosift ]
+url = "https://mcp.example.invalid/v1/mcp"
+bearer_token_env_var = "SOME_TOKEN"
+
+[mcp_servers.weather]
+url = "https://weather.example.com/mcp"
