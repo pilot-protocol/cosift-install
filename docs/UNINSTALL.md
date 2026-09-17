@@ -46,6 +46,11 @@ backups below still contain the token.
 
 There is no uninstall preview: `--dry-run` with `--uninstall` is a usage error and exits `2`.
 
+The Cosift CLI binary and `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json`
+are left available for independent CLI use. Run `cosift logout` to revoke and
+remove that session. This also invalidates the same token in any remaining
+agent configuration; it does not revoke other tokens belonging to the account.
+
 ## Manual removal
 
 Use this if the installer is unavailable, if `--uninstall` reported a failure or a warning, or
@@ -76,7 +81,7 @@ If you must edit the file by hand, the entry is the `"cosift"` key of the top-le
 ```json
 "cosift": {
   "type": "http",
-  "url": "https://cosift-mcp.pilotprotocol.network/v1/mcp",
+  "url": "https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp",
   "headers": { "Authorization": "Bearer ck_..." }
 }
 ```
@@ -96,7 +101,7 @@ comments included:
 ```toml
 # >>> cosift (managed by cosift-install — do not edit)
 [mcp_servers.cosift]
-url = "https://cosift-mcp.pilotprotocol.network/v1/mcp"
+url = "https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp"
 [mcp_servers.cosift.http_headers]
 Authorization = "Bearer ck_..."
 # <<< cosift
@@ -145,7 +150,7 @@ like this:
     },
     "cosift": {
       "type": "remote",
-      "url": "https://cosift-mcp.pilotprotocol.network/v1/mcp",
+      "url": "https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp",
       "headers": { "Authorization": "Bearer ck_..." }
     }
   }

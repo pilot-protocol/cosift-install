@@ -13,6 +13,8 @@
 #   codex     ${CODEX_HOME:-~/.codex}/config.toml   (marker-delimited block, appended)
 #   opencode  ${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.json[c]  (via `opencode mcp add`)
 #   state     ${XDG_CONFIG_HOME:-~/.config}/cosift/state.json          (mode 0600)
+#   CLI       ${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json (mode 0600)
+#             when a compatible cosift binary is installed; --no-cli skips this
 #   Every file touched is copied to <path>.cosift-backup-<UTC timestamp> first.
 #
 # THESE FILES THEN HOLD A LIVE CREDENTIAL.  Treat them like a password store.
@@ -43,7 +45,7 @@
 #
 # POSIX sh only (this runs under dash via curl | sh).  No bashisms.
 
-VERSION="0.1.0"
+VERSION="0.4.0"
 
 umask 077
 
@@ -55,8 +57,9 @@ fi
 
 # ---------------------------------------------------------------- configuration
 
-COSIFT_AUTH_BASE="${COSIFT_AUTH_BASE:-https://cosift-auth.pilotprotocol.network}"
-COSIFT_MCP_URL="${COSIFT_MCP_URL:-https://cosift-mcp.pilotprotocol.network/v1/mcp}"
+COSIFT_AUTH_BASE="${COSIFT_AUTH_BASE:-https://cosift-auth-udik5erlkq-uw.a.run.app}"
+COSIFT_MCP_URL="${COSIFT_MCP_URL:-https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp}"
+COSIFT_COMMUNITY_URL="${COSIFT_COMMUNITY_URL:-https://cosift.pilotprotocol.network}"
 COSIFT_EXTRA_HEADER="${COSIFT_EXTRA_HEADER:-}"
 
 MCP_PROTOCOL_VERSION="2025-06-18"
@@ -73,6 +76,7 @@ CODEX_CONFIG="$CODEX_HOME_DIR/config.toml"
 OPENCODE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/cosift"
 STATE_FILE="$STATE_DIR/state.json"
+CLI_SESSION_FILE="$STATE_DIR/community-session.json"
 # The state command writes this one when state.json is absent.
 ONBOARDING_STATE_FILE="$STATE_DIR/onboarding.json"
 
@@ -102,6 +106,8 @@ OPT_DRY_RUN=0
 OPT_UNINSTALL=0
 OPT_YES=0
 OPT_NEW_ACCOUNT=0
+OPT_CLI=auto
+CLI_CONNECTED=0
 OPT_HARNESS=""
 # "" = ask, 1 = install the interview, 0 = skip it.
 OPT_ONBOARDING=""
@@ -3877,6 +3883,8 @@ OPTIONS
   --no-launch        do not offer to open a harness when the install is done
   --new-account      always sign up by email; never reuse a credential that is
                      already on this machine
+  --cli              require connecting an already installed Cosift CLI
+  --no-cli           skip the installed CLI (otherwise it is connected when available)
   --help             show this help and exit
   --version          print the version and exit
 
@@ -3903,11 +3911,13 @@ THE ONBOARDING INTERVIEW
 
 ENVIRONMENT
   COSIFT_AUTH_BASE      override the auth base URL
-                        (default: https://cosift-auth.pilotprotocol.network)
+                        (default: https://cosift-auth-udik5erlkq-uw.a.run.app)
   COSIFT_MCP_URL        override the MCP URL
-                        (default: https://cosift-mcp.pilotprotocol.network/v1/mcp)
+                        (default: https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp)
+  COSIFT_COMMUNITY_URL  web and CLI origin; HTTPS required except localhost
+                        (default: https://cosift.pilotprotocol.network)
   COSIFT_EXTRA_HEADER   one extra header in "Name: value" form, sent on every
-                        request and written into each harness config alongside
+                        auth/MCP request and written into each harness config alongside
                         Authorization
   COSIFT_CODEX_SKILLS_DIR
                         where the codex interview file goes
@@ -4161,6 +4171,52 @@ final_verify() {
 	esac
 }
 
+# Reuse the token already in memory. The CLI validates the origin, verifies the
+# token against /api/me, and creates a new private, origin-bound session file.
+# Never read a credential back out of another application's configuration.
+community_cli_step() {
+	if [ "$OPT_CLI" = no ]; then return 0; fi
+	_cli=$(command -v cosift 2>/dev/null || :)
+	if [ -z "$_cli" ]; then
+		warn "The Cosift CLI is not installed; your agent connection is ready."
+		warn "Install a signed CLI release from https://github.com/pilot-protocol/cosift/releases, then rerun install.sh --cli."
+		if [ "$OPT_CLI" = required ]; then return 1; fi
+		return 0
+	fi
+	if [ -e "$CLI_SESSION_FILE" ] || [ -L "$CLI_SESSION_FILE" ]; then
+		warn "Existing CLI session left unchanged: $CLI_SESSION_FILE"
+		warn "To switch it, run cosift logout before rerunning the installer. Logout also revokes that token in any agents sharing it."
+		if [ "$OPT_CLI" = required ]; then return 1; fi
+		return 0
+	fi
+	"$_cli" login -help >"$TMPD/cli-help" 2>&1 || :
+	if ! grep -q -- '-session-file' "$TMPD/cli-help"; then
+		warn "The installed cosift does not support shared CLI sessions; install the current signed release and rerun install.sh --cli."
+		if [ "$OPT_CLI" = required ]; then return 1; fi
+		return 0
+	fi
+	if ! mkdir -p "$STATE_DIR"; then
+		warn "Could not create the CLI session directory: $STATE_DIR"
+		if [ "$OPT_CLI" = required ]; then return 1; fi
+		return 0
+	fi
+	step "Connecting the Cosift CLI to $COSIFT_COMMUNITY_URL"
+	if COSIFT_TOKEN="$TOKEN" COSIFT_SESSION_FILE='' COSIFT_EMAIL='' COSIFT_PASSWORD='' \
+		"$_cli" login -server "$COSIFT_COMMUNITY_URL" -session-file "$CLI_SESSION_FILE" \
+		>"$TMPD/cli-login" 2>&1; then
+		CLI_CONNECTED=1
+		ok "CLI session saved in $CLI_SESSION_FILE (0600)."
+		if [ -n "${COSIFT_TOKEN:-}${COSIFT_EMAIL:-}${COSIFT_PASSWORD:-}${COSIFT_SESSION_FILE:-}" ]; then
+			warn "Your existing COSIFT_TOKEN, COSIFT_EMAIL, COSIFT_PASSWORD or COSIFT_SESSION_FILE environment takes precedence. Unset those selectors to use the installed session."
+		fi
+		return 0
+	fi
+	warn "The agent is configured, but the CLI could not connect:"
+	redact <"$TMPD/cli-login" >&2
+	if [ "$OPT_CLI" = required ]; then return 1; fi
+	return 0
+}
+
 summary() {
 	say ""
 	say "${CLR_OK}${OK_MARK}Cosift is connected.${CLR_RESET}"
@@ -4170,6 +4226,12 @@ summary() {
 	done
 	# Short, but never silent: these files did not hold a credential before we ran.
 	say "  $(dim "Those files now hold your Cosift credential.")"
+	say "Web account  $COSIFT_COMMUNITY_URL (use the same email as your agents)"
+	if [ "$CLI_CONNECTED" -eq 1 ]; then
+		say "CLI ready    cosift request -query 'Your question'"
+		say "Contribute   cosift contribute https://example.org/article"
+		say "Credits      cosift contribute -credits"
+	fi
 	if [ -n "$TIGHTENED" ]; then
 		say "  $(dim "Tightened to 0600, having been readable by others:")"
 		printf '%s\n' "$TIGHTENED" | sed -e "s/^/    $CLR_DIM/" -e "s/\$/$CLR_RESET/"
@@ -4300,6 +4362,10 @@ onboarding_dry_run() {
 
 dry_run() {
 	step "Dry run - nothing will be written"
+	if [ "$OPT_CLI" != no ]; then
+		say "CLI: an installed cosift would verify this token at $COSIFT_COMMUNITY_URL"
+		say "     and create $CLI_SESSION_FILE (0600); existing files stay untouched."
+	fi
 	say ""
 	if [ "$OPT_NEW_ACCOUNT" -eq 1 ]; then
 		say "Token source: a new account. Any credential already on this machine is left"
@@ -4409,7 +4475,11 @@ do_install() {
 	fi
 	obtain_token
 	configure_harnesses
-	final_verify
+	if final_verify; then
+		if ! community_cli_step; then
+			exit "$EX_HARNESS"
+		fi
+	fi
 	if ! write_state; then
 		exit "$EX_HARNESS"
 	fi
@@ -4522,6 +4592,8 @@ do_uninstall() {
 parse_args() {
 	_want_onb=0
 	_skip_onb=0
+	_want_cli=0
+	_skip_cli=0
 	if [ -n "${COSIFT_NO_LAUNCH+set}" ]; then OPT_LAUNCH=0; fi
 	while [ $# -gt 0 ]; do
 		case "$1" in
@@ -4532,6 +4604,8 @@ parse_args() {
 		--no-onboarding) _skip_onb=1 ;;
 		--no-launch) OPT_LAUNCH=0 ;;
 		--new-account) OPT_NEW_ACCOUNT=1 ;;
+		--cli) _want_cli=1 ;;
+		--no-cli) _skip_cli=1 ;;
 		--harness=*)
 			OPT_HARNESS=${1#--harness=}
 			if [ -z "$OPT_HARNESS" ]; then
@@ -4574,6 +4648,15 @@ parse_args() {
 		err "--onboarding and --no-onboarding cannot be combined."
 		usage >&2
 		exit "$EX_USAGE"
+	fi
+	if [ "$_want_cli" -eq 1 ] && [ "$_skip_cli" -eq 1 ]; then
+		err "--cli and --no-cli cannot be combined."
+		exit "$EX_USAGE"
+	fi
+	if [ "$_skip_cli" -eq 1 ]; then
+		OPT_CLI=no
+	elif [ "$_want_cli" -eq 1 ]; then
+		OPT_CLI=required
 	fi
 	if [ "$_skip_onb" -eq 1 ]; then
 		OPT_ONBOARDING=0

@@ -6,7 +6,8 @@ every step rather than take a summary on trust.
 
 Everything here is checkable against two files: `install.sh` and the `cosift-onboarding`
 command, whose source the installer carries inside itself (`onboarding/bin/cosift-onboarding`
-in this repository). Nothing is fetched at runtime.
+in this repository). The optional CLI handoff also invokes the already installed
+[Cosift CLI](https://github.com/pilot-protocol/cosift). No code is fetched at runtime.
 
 ## 1. The install command
 
@@ -29,7 +30,12 @@ In order, the script:
 6. Installs onboarding, unless you declined it: one file per harness, the local command, and
    on Claude Code the hook and permission grants in `~/.claude/settings.json`.
 7. Makes one MCP `initialize` call with the credential it just wrote, to prove the entry works.
-8. Writes its state file and prints a summary of every path it touched.
+8. If a compatible `cosift` binary is on `PATH`, passes the verified token to its
+   `login` command through the subprocess environment. The CLI verifies it at
+   `GET $COSIFT_COMMUNITY_URL/api/me` and creates a private origin-bound session.
+   `--no-cli` skips this, and an existing session is never overwritten. No binary
+   is downloaded. `--cli` makes an unavailable or unsuccessful CLI handoff an error.
+9. Writes its state file and prints a summary of every path it touched.
 
 `--dry-run` stops after step 3: it prints the per-harness plan, including the `settings.json`
 line and the state of each interview path, and then exits without writing a byte under your
@@ -59,6 +65,7 @@ call with a credential already on the machine, to say whether that one would be 
 | `~/.local/bin/cosift-onboarding` | the local command described in [section 5](#5-cosift-onboarding-digest) | `0755` |
 | `~/.claude/settings.json` | the hook and the permission grants in [section 3](#3-the-change-to-claudesettingsjson) | preserved; `0600` if the installer created the file |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what was installed | `0600` |
+| `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json` | token, origin and expiry for the installed CLI; only if this file does not already exist | `0600` |
 | `<each edited file>.cosift-backup-<UTC timestamp>` | a copy of the file as it was before the edit | `0600` |
 | a directory under `$TMPDIR` | request bodies and curl header files, deleted on exit | `0700` |
 
@@ -73,13 +80,15 @@ can read the token, and so can any backup taken after it was written.
 
 ### Network calls
 
-The installer contacts two hosts and no others:
+The installer contacts the auth and MCP hosts, plus the community origin when
+connecting an installed CLI:
 
 | Request | To | Body |
 | --- | --- | --- |
 | `POST /auth/start` | `$COSIFT_AUTH_BASE` | the email address you typed |
 | `POST /auth/verify` | `$COSIFT_AUTH_BASE` | the request id from the previous call and the six-digit code |
 | `POST` the MCP endpoint | `$COSIFT_MCP_URL` | a JSON-RPC `initialize`, carrying the credential in a header |
+| `GET /api/me` through the installed CLI | `$COSIFT_COMMUNITY_URL` | no body; the same credential in the authorization header |
 
 `/auth/start` returns the same `200` for a deliverable address, an unknown one, a malformed one
 and one over its cap, on purpose — a differing response would let anyone test whether an address
