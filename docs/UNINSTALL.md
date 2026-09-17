@@ -15,22 +15,39 @@ sh install.sh --uninstall
 What it does:
 
 1. Reads `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` for the list of harnesses it
-   configured. If that file is missing, it falls back to looking for our entry in each of the
-   three supported harnesses.
+   configured. If that file is missing, or names no harness, it falls back to looking for our
+   entry in each of the three supported harnesses.
 2. Removes the `cosift` entry from each of them. Other MCP servers are not touched.
-3. Removes `state.json`.
+3. Removes the onboarding interview file, and then the `cosift-onboarding` directory it created
+   for that file, only if that directory is empty — a `.cosift-backup-*` file left in there
+   keeps it from being empty, so the directory stays. A file we wrote, this release's or an
+   earlier release's, is removed as it is; a file at one of those paths that we did not write is
+   backed up before it is removed.
+4. Removes `~/.local/bin/cosift-onboarding`, but only if that file is byte-identical to the one
+   it installed. If it is not — an older release's copy, or one you edited — it says so and
+   leaves the file; remove it by hand.
+5. Removes `state.json`, and `onboarding.json` beside it.
 
-It exits `0` when everything it named was removed, and non-zero otherwise. It does **not**
-delete backup files, and it does **not** revoke the token — see
+It does not trust the state file for step 3: it checks all three interview paths directly and
+removes whatever it recognises as ours. A file left behind by an earlier run is still found,
+and re-running after you fix a permission problem still clears it.
+
+It exits non-zero when it cannot remove a `cosift` entry from a harness config, or cannot
+remove `state.json`; the state file is left in place so you can retry. A failure to remove an
+interview file, the `cosift-onboarding` command or `onboarding.json` is only a warning: the run
+names the file it could not remove and can still exit `0`. Read the output, not just the exit
+code.
+
+It does **not** delete backup files, and it does **not** revoke the token — see
 [Revoking a token](../README.md#revoking-a-token) in the README for that, and note that the
 backups below still contain the token.
 
-To see what it would do without doing it, add `--dry-run`.
+There is no uninstall preview: `--dry-run` with `--uninstall` is a usage error and exits `2`.
 
 ## Manual removal
 
-Use this if the installer is unavailable, if `--uninstall` reported a failure, or if you
-simply prefer to do it yourself.
+Use this if the installer is unavailable, if `--uninstall` reported a failure or a warning, or
+if you simply prefer to do it yourself.
 
 ### Claude Code
 
@@ -161,6 +178,96 @@ opencode mcp list      # should exit 0 and no longer list cosift
 
 If that command fails after your edit, restore your backup (below) and try again.
 
+## Removing the onboarding interview
+
+Skip this if you declined the interview when you installed — in that case nothing below was
+ever written. `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` lists what was installed, under
+`onboarding_installed` and `onboarding_cmd`. Both keys are always there; declining leaves them
+`[]` and `""`.
+
+One file per harness, and one directory per file except on opencode:
+
+| Harness | The file | The directory we created |
+| --- | --- | --- |
+| Claude Code | `~/.claude/skills/cosift-onboarding/SKILL.md` | `~/.claude/skills/cosift-onboarding` |
+| Codex CLI | `${COSIFT_CODEX_SKILLS_DIR:-~/.agents/skills}/cosift-onboarding/SKILL.md` | that file's parent directory |
+| opencode | `${XDG_CONFIG_HOME:-~/.config}/opencode/commands/cosift-onboarding.md` | none |
+
+Note that Codex's skills root is `~/.agents/skills`. It is not under `$CODEX_HOME`, so if you
+moved `CODEX_HOME` the skill is still in `~/.agents` — unless you set
+`COSIFT_CODEX_SKILLS_DIR` at install time, in which case it is under that.
+
+**The directory rule:** remove the `cosift-onboarding` directory, and only when it is empty.
+Never remove `~/.claude/skills`, the Codex skills root, or opencode's `commands/`. Those hold
+every other skill and command you have — the installer creates them when they are missing, but
+they are shared, so it leaves them behind even when our file was the only thing in them. The
+`cosift-onboarding` directory is ours alone, so that one goes. On opencode there is no directory
+of ours at all — the file sits directly in the shared `commands/` directory.
+
+Claude Code:
+
+```sh
+rm -f ~/.claude/skills/cosift-onboarding/SKILL.md
+rmdir ~/.claude/skills/cosift-onboarding      # refuses if anything else is in there
+```
+
+Codex CLI:
+
+```sh
+rm -f ~/.agents/skills/cosift-onboarding/SKILL.md
+rmdir ~/.agents/skills/cosift-onboarding
+```
+
+opencode — no `rmdir`, because `commands/` is not ours:
+
+```sh
+rm -f ~/.config/opencode/commands/cosift-onboarding.md
+```
+
+If `rmdir` refuses, list the directory before you force anything: a `.cosift-backup-*` file we
+took there is enough to keep it alive, and the installer never deletes one. That is also why
+`--uninstall` can leave the directory behind.
+
+Then the local command, which is shared by all three:
+
+```sh
+rm -f ~/.local/bin/cosift-onboarding
+```
+
+Verify with `ls`: the file being gone is the check. Claude Code has no subcommand that lists
+installed skills, so there is nothing else to ask.
+
+Restart any harness that was running while you deleted the file.
+
+### The local state file
+
+The interview records locally that you finished it, or that you declined, so that it does not
+ask again. That record is one of two files, depending on what existed at the time:
+
+```sh
+rm -f ~/.config/cosift/state.json ~/.config/cosift/onboarding.json
+```
+
+If you set `XDG_CONFIG_HOME`, both files are under it rather than under `~/.config`, as are
+opencode's config and its `commands/` directory above.
+
+`state.json` is the installer's own file. `onboarding.json` is written by
+`cosift-onboarding complete` only when there is no `state.json` to write into — which is why
+removing just `state.json` can leave the flag behind in the second file. Remove both. `rm -f`
+says nothing about the one that is not there.
+
+`cosift-onboarding complete` also leaves one backup of whichever of the two files it rewrote,
+named the same way as every other backup here. It keeps one, not one per run. Delete it too if
+you want the directory clean:
+
+```sh
+rm -f ~/.config/cosift/state.json.cosift-backup-* \
+      ~/.config/cosift/onboarding.json.cosift-backup-*
+rmdir ~/.config/cosift          # only succeeds once the directory is empty
+```
+
+These files never contain the token.
+
 ## Backup files
 
 Every file the installer edits is copied first to:
@@ -172,12 +279,26 @@ Every file the installer edits is copied first to:
 for example `~/.codex/config.toml.cosift-backup-20260412T091544Z`. The timestamp is UTC in
 `YYYYmmddTHHMMSSZ` form, so the backups sort chronologically.
 
+The same naming covers a file that was already sitting at one of the onboarding paths: it is
+copied before we replace it, and copied again before `--uninstall` removes it, unless it is one
+of ours — this release's copy or an earlier release's — in which case there is nothing of yours
+to preserve. A `cosift-onboarding` command that was not ours is copied the same way before it
+is replaced; `--uninstall` does not remove that one at all. On
+opencode those copies land in the shared `commands/` directory, which is where to look for a
+stray `cosift-onboarding.md.cosift-backup-...` later.
+
 Find them:
 
 ```sh
 ls -la ~/.claude.json.cosift-backup-* \
        ~/.codex/config.toml.cosift-backup-* \
-       ~/.config/opencode/opencode.json*.cosift-backup-* 2>/dev/null
+       ~/.config/opencode/opencode.json*.cosift-backup-* \
+       ~/.claude/skills/cosift-onboarding/SKILL.md.cosift-backup-* \
+       ~/.agents/skills/cosift-onboarding/SKILL.md.cosift-backup-* \
+       ~/.config/opencode/commands/cosift-onboarding.md.cosift-backup-* \
+       ~/.local/bin/cosift-onboarding.cosift-backup-* \
+       ~/.config/cosift/state.json.cosift-backup-* \
+       ~/.config/cosift/onboarding.json.cosift-backup-* 2>/dev/null
 ```
 
 Restore one:
@@ -196,5 +317,7 @@ away from deleting the only copy of a config someone needed.
 Two things to remember when you do clean them up:
 
 - A backup taken from a config that already held a Cosift token **contains that token in
-  cleartext**. Treat the files as secrets; delete them rather than archiving them.
+  cleartext**. Treat the files as secrets; delete them rather than archiving them. A backup
+  taken from an onboarding path holds whatever was at that path before — never a token of ours,
+  but read it before you delete it if you did not put it there yourself.
 - Deleting backups is not reversible. Check the current config is the one you want first.

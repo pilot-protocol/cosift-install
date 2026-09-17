@@ -31,6 +31,9 @@ Shorter variant for a card or a meta description:
 
 List exactly these three. The installer works on Linux and macOS.
 
+If the user accepts the optional onboarding interview during the install, their agent also
+gains a `/cosift-onboarding` command (`$cosift-onboarding` on Codex).
+
 ## Links
 
 | | |

@@ -1,0 +1,27 @@
+{
+  "harness": "hermes",
+  "output_relpath": "cosift-onboarding/SKILL.md",
+  "install_path": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-onboarding/SKILL.md",
+  "owned_dir": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-onboarding",
+  "shared_parent": "${HERMES_HOME:-$HOME/.hermes}/skills",
+  "invocation": "/cosift-onboarding",
+  "verified": false,
+  "allowed_frontmatter_keys": [
+    "description",
+    "metadata",
+    "name",
+    "version"
+  ],
+  "frontmatter": [
+    ["name", "cosift-onboarding"],
+    ["description", "Run the Cosift onboarding interview. Use only when the user explicitly asks to set up, onboard, or configure Cosift, or invokes this skill by name. Turns interests the user states in the conversation into followed topics and at most three coverage requests. Never scans or reads the user's files to infer interests."],
+    ["version", "{{VERSION}}"],
+    ["metadata", {"category": "onboarding"}]
+  ],
+  "banner": [
+    "> **UNVERIFIED HARNESS.** The install path, frontmatter keys and invocation string used for",
+    "> cosift-onboarding v{{VERSION}} on Hermes were not verified against a running Hermes build.",
+    "> Hermes also performs no argument substitution, so anything typed after the invocation arrives",
+    "> as ordinary text rather than as a substituted argument."
+  ]
+}

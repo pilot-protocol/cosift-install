@@ -1,0 +1,17 @@
+{
+  "harness": "codex",
+  "output_relpath": "cosift-onboarding/SKILL.md",
+  "install_path": "$HOME/.agents/skills/cosift-onboarding/SKILL.md",
+  "owned_dir": "$HOME/.agents/skills/cosift-onboarding",
+  "shared_parent": "$HOME/.agents/skills",
+  "invocation": "$cosift-onboarding",
+  "verified": false,
+  "allowed_frontmatter_keys": [
+    "description",
+    "name"
+  ],
+  "frontmatter": [
+    ["name", "cosift-onboarding"],
+    ["description", "Run the Cosift onboarding interview. Use only when the user explicitly asks to set up, onboard, or configure Cosift, or invokes this skill by name. Turns interests the user states in the conversation into followed topics and at most three coverage requests. Never scans or reads the user's files to infer interests."]
+  ]
+}

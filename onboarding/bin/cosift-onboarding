@@ -1,0 +1,897 @@
+#!/bin/sh
+# cosift-onboarding: local onboarding state for the Cosift onboarding interview.
+set -u
+
+PROG=cosift-onboarding
+VERSION_FALLBACK=1.0.0
+HARNESS_LIST='claude codex opencode hermes'
+
+EX_DONE=1
+EX_UNKNOWN=2
+EX_MALFORMED=3
+EX_USAGE=4
+EX_WRITE=5
+
+TMPF=''
+HOME=${HOME:-}
+PY=''
+
+cleanup() {
+	if [ -n "$TMPF" ]; then
+		rm -f "$TMPF" 2>/dev/null
+	fi
+	return 0
+}
+trap cleanup EXIT INT TERM HUP
+
+warn() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+
+fail() {
+	_c=$1
+	shift
+	warn "$*"
+	exit "$_c"
+}
+
+usage() {
+	cat <<'EOF'
+Usage:
+  cosift-onboarding status [--json]
+  cosift-onboarding complete [--declined] [--force]
+  cosift-onboarding paths [--json]
+  cosift-onboarding --help | --version
+
+status   Report whether the onboarding interview is still due.
+           0 pending     state file present, onboarded is false
+           1 done        onboarded is true
+           1 declined    onboarded is the string "declined"
+           2 unknown     no state file (Cosift may be configured by hand)
+           3 malformed   state file present but not parseable
+           4             usage error
+         The matching lowercase word is printed on stdout. With --json a single
+         compact JSON line is printed instead:
+           {"state_path":...,"present":bool,"onboarded":bool|string|null,
+            "version":...,"harnesses_configured":[...],"onboarded_at":...|null}
+         "version" is the state file's own schema version, not this script's.
+         On a malformed file the line carries "malformed":true and onboarded null.
+
+complete Record that onboarding finished. --declined records the string
+         "declined" instead of true. --force rewrites an already-recorded state.
+         Sets three keys: onboarded, onboarded_at and onboarding_version. When
+         the file already existed it is first copied to
+         <path>.cosift-backup-<UTC>, and any earlier backup of that file is
+         dropped so at most one is left behind. The result is written 0600.
+           0 recorded, including the already-recorded no-op
+           3 state file present but not parseable (nothing is written)
+           4 usage error
+           5 write failed
+
+paths    Print the install path of the onboarding skill for each harness,
+         one "<harness>\t<path>" line, or a JSON object with --json. Paths come
+         from onboarding/generated/MANIFEST.json when it is reachable relative
+         to this script, otherwise from the built-in table.
+
+State files
+  ${XDG_CONFIG_HOME:-$HOME/.config}/cosift/state.json
+      Owned by the Cosift installer. Read-modify-written in place: unknown keys
+      are preserved and only onboarded, onboarded_at and onboarding_version are
+      ever set.
+  ${XDG_CONFIG_HOME:-$HOME/.config}/cosift/onboarding.json
+      Written only when state.json is absent. This script never fabricates
+      state.json, because an invented harnesses_configured would mislead the
+      installer's uninstall path. status reads either file and prefers
+      state.json when both exist.
+
+JSON handling
+  No jq. The ladder is python3, then python, then a narrow POSIX fallback built
+  on awk. The fallback substitutes the onboarded value in place and appends
+  onboarded_at and onboarding_version next to it; it refuses (exit 3) when the
+  string "onboarded" occurs more than once in the file, because a blind
+  substitution could then corrupt unrelated data. Set
+  COSIFT_ONBOARDING_NO_PYTHON=1 to exercise the fallback deliberately.
+
+Environment
+  XDG_CONFIG_HOME             base for the state files
+  HERMES_HOME                 base for the hermes skills directory
+  COSIFT_CODEX_SKILLS_DIR     override for the codex skills directory
+  COSIFT_ONBOARDING_NO_PYTHON skip the python rungs of the JSON ladder
+
+This script never reads harness configuration, never touches credentials, never
+makes a network call and never prompts.
+EOF
+}
+
+# ---------------------------------------------------------------- paths ----
+
+cfg_home() {
+	if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+		printf '%s' "$XDG_CONFIG_HOME"
+	else
+		printf '%s' "$HOME/.config"
+	fi
+}
+
+hermes_home() {
+	if [ -n "${HERMES_HOME:-}" ]; then
+		printf '%s' "$HERMES_HOME"
+	else
+		printf '%s' "$HOME/.hermes"
+	fi
+}
+
+codex_skills_dir() {
+	if [ -n "${COSIFT_CODEX_SKILLS_DIR:-}" ]; then
+		printf '%s' "$COSIFT_CODEX_SKILLS_DIR"
+	else
+		printf '%s' "$HOME/.agents/skills"
+	fi
+}
+
+require_home() {
+	if [ -z "$HOME" ] && [ -z "${XDG_CONFIG_HOME:-}" ]; then
+		fail "$EX_USAGE" 'neither HOME nor XDG_CONFIG_HOME is set'
+	fi
+}
+
+script_dir() {
+	_d=${0%/*}
+	if [ "$_d" = "$0" ]; then
+		_d=.
+	fi
+	(cd "$_d" 2>/dev/null && pwd) || printf '%s' "$_d"
+}
+
+default_target() {
+	case $1 in
+	claude) printf '%s' "$HOME/.claude/skills/cosift-onboarding/SKILL.md" ;;
+	codex) printf '%s' "$(codex_skills_dir)/cosift-onboarding/SKILL.md" ;;
+	opencode) printf '%s' "$(cfg_home)/opencode/commands/cosift-onboarding.md" ;;
+	hermes) printf '%s' "$(hermes_home)/skills/cosift-onboarding/SKILL.md" ;;
+	*) return 1 ;;
+	esac
+}
+
+expand_path() {
+	_p=$1
+	case $_p in
+	[~]) _p=$HOME ;;
+	[~]/*) _p="$HOME/${_p#?/}" ;;
+	esac
+	case $_p in
+	*'$'* | *'~'*)
+		_p=$(printf '%s' "$_p" | sed \
+			-e "s|\${XDG_CONFIG_HOME:-~/.config}|$(cfg_home)|g" \
+			-e "s|\${XDG_CONFIG_HOME:-\$HOME/.config}|$(cfg_home)|g" \
+			-e "s|\${XDG_CONFIG_HOME}|$(cfg_home)|g" \
+			-e "s|\$XDG_CONFIG_HOME|$(cfg_home)|g" \
+			-e "s|\${HERMES_HOME:-~/.hermes}|$(hermes_home)|g" \
+			-e "s|\${HERMES_HOME:-\$HOME/.hermes}|$(hermes_home)|g" \
+			-e "s|\${HERMES_HOME}|$(hermes_home)|g" \
+			-e "s|\$HERMES_HOME|$(hermes_home)|g" \
+			-e "s|\${HOME}|$HOME|g" \
+			-e "s|\$HOME|$HOME|g" \
+			-e "s|^~/|$HOME/|")
+		;;
+	esac
+	printf '%s' "$_p"
+}
+
+version_string() {
+	_vf=$(script_dir)/../VERSION
+	_v=''
+	if [ -r "$_vf" ]; then
+		_v=$(sed -n '1p' "$_vf" | tr -d ' \011\015')
+	fi
+	if [ -z "$_v" ]; then
+		_v=$VERSION_FALLBACK
+	fi
+	printf '%s' "$_v"
+}
+
+manifest_path() {
+	_root=$(cd "$(script_dir)/.." 2>/dev/null && pwd) || return 0
+	if [ -r "$_root/generated/MANIFEST.json" ]; then
+		printf '%s' "$_root/generated/MANIFEST.json"
+	fi
+}
+
+# --------------------------------------------------------------- python ----
+
+find_python() {
+	if [ "${COSIFT_ONBOARDING_NO_PYTHON:-0}" != 0 ]; then
+		PY=''
+		return 1
+	fi
+	for _c in python3 python; do
+		if command -v "$_c" >/dev/null 2>&1; then
+			if "$_c" -c 'import json,sys;sys.exit(0 if sys.version_info[0]>=2 else 1)' >/dev/null 2>&1; then
+				PY=$_c
+				return 0
+			fi
+		fi
+	done
+	PY=''
+	return 1
+}
+
+py_read() {
+	"$PY" - "$1" <<'PYEOF'
+import json, sys
+try:
+    from collections import OrderedDict
+except ImportError:
+    OrderedDict = dict
+try:
+    text_type = basestring
+except NameError:
+    text_type = str
+
+path = sys.argv[1]
+try:
+    fh = open(path, 'rb')
+    raw = fh.read()
+    fh.close()
+    doc = json.loads(raw.decode('utf-8'), object_pairs_hook=OrderedDict)
+except Exception:
+    sys.stdout.write('malformed\n')
+    sys.exit(0)
+if not isinstance(doc, dict):
+    sys.stdout.write('malformed\n')
+    sys.exit(0)
+
+ob = doc.get('onboarded', False)
+if ob is True:
+    word = 'done'
+elif ob is False or ob is None:
+    word = 'pending'
+elif isinstance(ob, text_type) and ob.strip().lower() == 'declined':
+    word = 'declined'
+else:
+    word = 'malformed'
+
+out = OrderedDict()
+out['state_path'] = path
+out['present'] = True
+out['onboarded'] = None if word == 'malformed' else ob
+out['version'] = doc.get('version')
+hc = doc.get('harnesses_configured')
+out['harnesses_configured'] = hc if isinstance(hc, list) else []
+oa = doc.get('onboarded_at')
+out['onboarded_at'] = oa if isinstance(oa, text_type) else None
+if word == 'malformed':
+    out['malformed'] = True
+sys.stdout.write(word + '\n')
+sys.stdout.write(json.dumps(out, separators=(',', ':')) + '\n')
+PYEOF
+}
+
+py_write() {
+	"$PY" - "$1" "$2" "$3" "$4" <<'PYEOF'
+import json, os, sys
+try:
+    from collections import OrderedDict
+except ImportError:
+    OrderedDict = dict
+
+path, value, stamp, version = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+doc = OrderedDict()
+if os.path.exists(path):
+    try:
+        fh = open(path, 'rb')
+        raw = fh.read()
+        fh.close()
+        doc = json.loads(raw.decode('utf-8'), object_pairs_hook=OrderedDict)
+    except Exception:
+        sys.exit(3)
+    if not isinstance(doc, dict):
+        sys.exit(3)
+
+doc['onboarded'] = True if value == 'true' else 'declined'
+doc['onboarded_at'] = stamp
+doc['onboarding_version'] = version
+
+directory = os.path.dirname(path) or '.'
+tmp = os.path.join(directory, '.cosift-onboarding.tmp.%d' % os.getpid())
+data = (json.dumps(doc, indent=2) + '\n').encode('utf-8')
+fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+try:
+    handle = os.fdopen(fd, 'wb')
+    handle.write(data)
+    handle.flush()
+    os.fsync(handle.fileno())
+    handle.close()
+except Exception:
+    try:
+        os.unlink(tmp)
+    except Exception:
+        pass
+    raise
+os.chmod(tmp, 0o600)
+os.rename(tmp, path)
+try:
+    dfd = os.open(directory, os.O_RDONLY)
+    os.fsync(dfd)
+    os.close(dfd)
+except Exception:
+    pass
+PYEOF
+}
+
+py_manifest_paths() {
+	"$PY" - "$1" "$HARNESS_LIST" <<'PYEOF'
+import json, sys
+
+SOURCE_KEYS = ('install_path', 'target_path', 'target', 'destination', 'dest', 'path', 'install')
+NAME_KEYS = ('harness', 'name', 'id', 'harness_name')
+GROUP_KEYS = ('harnesses', 'artifacts', 'files', 'targets', 'entries')
+
+path = sys.argv[1]
+wanted = sys.argv[2].split()
+try:
+    fh = open(path, 'rb')
+    manifest = json.loads(fh.read().decode('utf-8'))
+    fh.close()
+except Exception:
+    sys.exit(1)
+
+
+def pick(entry, keys):
+    for key in keys:
+        value = entry.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def collect(node, found):
+    if isinstance(node, dict):
+        for key in GROUP_KEYS:
+            child = node.get(key)
+            if isinstance(child, dict):
+                for name, entry in child.items():
+                    if isinstance(entry, dict) and name in wanted:
+                        found.setdefault(name, entry)
+                return
+            if isinstance(child, list):
+                collect(child, found)
+                return
+        for name, entry in node.items():
+            if isinstance(entry, dict) and name in wanted:
+                found.setdefault(name, entry)
+    elif isinstance(node, list):
+        for entry in node:
+            if not isinstance(entry, dict):
+                continue
+            name = pick(entry, NAME_KEYS)
+            if name in wanted:
+                found.setdefault(name, entry)
+
+
+found = {}
+collect(manifest, found)
+for name in wanted:
+    entry = found.get(name)
+    value = pick(entry, SOURCE_KEYS) if entry else None
+    sys.stdout.write(name + '\t' + (value or '') + '\n')
+PYEOF
+}
+
+# ------------------------------------------------------- posix fallback ----
+
+# shellcheck disable=SC2016
+AWK_VALIDATE='
+{ doc = doc $0 "\n" }
+END {
+  n = length(doc); depth = 0; instr = 0; started = 0; ok = 1
+  for (p = 1; p <= n; p++) {
+    c = substr(doc, p, 1)
+    if (instr) {
+      if (c == "\\") { p++; continue }
+      if (c == "\"") instr = 0
+      continue
+    }
+    if (c == "\"") { instr = 1; continue }
+    if (c == "{" || c == "[") {
+      if (!started && c != "{") ok = 0
+      started = 1; depth++
+      continue
+    }
+    if (c == "}" || c == "]") { depth--; if (depth < 0) ok = 0; continue }
+    if (c ~ /[ \t\r\n]/) continue
+    if (!started) ok = 0
+  }
+  if (instr || depth != 0 || !started || !ok) exit 1
+  exit 0
+}
+'
+
+# shellcheck disable=SC2016
+AWK_GET='
+{ doc = doc $0 "\n" }
+END {
+  n = length(doc)
+  pat = "\"" key "\""
+  i = index(doc, pat)
+  if (i == 0) exit 1
+  p = i + length(pat)
+  while (p <= n && substr(doc, p, 1) ~ /[ \t\r\n]/) p++
+  if (substr(doc, p, 1) != ":") exit 1
+  p++
+  while (p <= n && substr(doc, p, 1) ~ /[ \t\r\n]/) p++
+  c = substr(doc, p, 1)
+  out = ""
+  if (c == "\"") {
+    out = "\""; p++
+    while (p <= n) {
+      c = substr(doc, p, 1)
+      out = out c
+      if (c == "\\") { p++; out = out substr(doc, p, 1); p++; continue }
+      p++
+      if (c == "\"") break
+    }
+  } else if (c == "{" || c == "[") {
+    depth = 0; instr = 0
+    while (p <= n) {
+      c = substr(doc, p, 1)
+      if (instr) {
+        out = out c
+        if (c == "\\") { p++; out = out substr(doc, p, 1); p++; continue }
+        if (c == "\"") instr = 0
+        p++; continue
+      }
+      if (c == "\"") { instr = 1; out = out c; p++; continue }
+      if (c ~ /[ \t\r\n]/) { p++; continue }
+      out = out c
+      if (c == "{" || c == "[") depth++
+      else if (c == "}" || c == "]") { depth--; if (depth == 0) { p++; break } }
+      p++
+    }
+  } else {
+    while (p <= n && index(",}] \t\r\n", substr(doc, p, 1)) == 0) {
+      out = out substr(doc, p, 1); p++
+    }
+  }
+  if (out == "") exit 1
+  print out
+  exit 0
+}
+'
+
+# shellcheck disable=SC2016
+AWK_SET='
+{ doc = doc $0 "\n" }
+END {
+  s = doc; cnt = 0
+  while ((i = index(s, "\"onboarded\"")) > 0) { cnt++; s = substr(s, i + 11) }
+  if (cnt != 1) exit 3
+  n = length(doc)
+  i = index(doc, "\"onboarded\"")
+  if (i == 0) exit 3
+  p = i + 11
+  while (p <= n && substr(doc, p, 1) ~ /[ \t\r\n]/) p++
+  if (substr(doc, p, 1) != ":") exit 3
+  p++
+  while (p <= n && substr(doc, p, 1) ~ /[ \t\r\n]/) p++
+  c = substr(doc, p, 1)
+  if (c == "\"") {
+    p++
+    while (p <= n) {
+      c = substr(doc, p, 1)
+      if (c == "\\") { p += 2; continue }
+      p++
+      if (c == "\"") break
+    }
+  } else if (c == "{" || c == "[") {
+    exit 3
+  } else {
+    while (p <= n && index(",}] \t\r\n", substr(doc, p, 1)) == 0) p++
+  }
+  printf "%s\"onboarded\": %s, \"onboarded_at\": \"%s\", \"onboarding_version\": \"%s\"%s",
+    substr(doc, 1, i - 1), newval, stamp, version, substr(doc, p)
+  exit 0
+}
+'
+
+json_valid() { awk "$AWK_VALIDATE" "$1" >/dev/null 2>&1; }
+
+json_get() { awk -v key="$2" "$AWK_GET" "$1" 2>/dev/null; }
+
+json_escape() {
+	printf '%s' "$1" | sed -e 's|\\|\\\\|g' -e 's|"|\\"|g'
+}
+
+# ---------------------------------------------------------------- state ----
+
+state_word_from_raw() {
+	case $1 in
+	true) printf 'done' ;;
+	false | null | '') printf 'pending' ;;
+	'"declined"' | '"Declined"' | '"DECLINED"') printf 'declined' ;;
+	*) printf 'malformed' ;;
+	esac
+}
+
+READ_WORD=''
+READ_JSON=''
+
+read_state() {
+	_path=$1
+	READ_WORD=''
+	READ_JSON=''
+	if [ -n "$PY" ]; then
+		_out=$(py_read "$_path" 2>/dev/null)
+		if [ -z "$_out" ]; then
+			READ_WORD=malformed
+		else
+			READ_WORD=$(printf '%s\n' "$_out" | sed -n '1p')
+			READ_JSON=$(printf '%s\n' "$_out" | sed -n '2p')
+		fi
+	else
+		if ! json_valid "$_path"; then
+			READ_WORD=malformed
+		else
+			_ob=$(json_get "$_path" onboarded)
+			READ_WORD=$(state_word_from_raw "$_ob")
+			_ver=$(json_get "$_path" version)
+			_hc=$(json_get "$_path" harnesses_configured)
+			_at=$(json_get "$_path" onboarded_at)
+			case $_hc in
+			'['*) : ;;
+			*) _hc='[]' ;;
+			esac
+			case $_at in
+			'"'*) : ;;
+			*) _at=null ;;
+			esac
+			if [ -z "$_ver" ]; then
+				_ver=null
+			fi
+			if [ "$READ_WORD" = malformed ]; then
+				_ob=null
+			elif [ -z "$_ob" ]; then
+				_ob=false
+			fi
+			READ_JSON=$(printf '{"state_path":"%s","present":true,"onboarded":%s,"version":%s,"harnesses_configured":%s,"onboarded_at":%s%s}' \
+				"$(json_escape "$_path")" "$_ob" "$_ver" "$_hc" "$_at" \
+				"$(if [ "$READ_WORD" = malformed ]; then printf ',"malformed":true'; fi)")
+		fi
+	fi
+	if [ "$READ_WORD" = malformed ] && [ -z "$READ_JSON" ]; then
+		READ_JSON=$(printf '{"state_path":"%s","present":true,"onboarded":null,"version":null,"harnesses_configured":[],"onboarded_at":null,"malformed":true}' \
+			"$(json_escape "$_path")")
+	fi
+}
+
+absent_json() {
+	printf '{"state_path":"%s","present":false,"onboarded":null,"version":null,"harnesses_configured":[],"onboarded_at":null}' \
+		"$(json_escape "$1")"
+}
+
+authoritative_file() {
+	if [ -f "$STATE_FILE" ]; then
+		printf '%s' "$STATE_FILE"
+	elif [ -f "$OWN_FILE" ]; then
+		printf '%s' "$OWN_FILE"
+	fi
+}
+
+backup_path() {
+	_base="$1.cosift-backup-$(date -u '+%Y%m%dT%H%M%SZ')"
+	_try=$_base
+	_n=2
+	while [ -e "$_try" ]; do
+		_try="$_base-$_n"
+		_n=$((_n + 1))
+	done
+	printf '%s' "$_try"
+}
+
+# ------------------------------------------------------------ subcommands --
+
+cmd_status() {
+	_json=0
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--json) _json=1 ;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*) fail "$EX_USAGE" "status: unknown argument: $1" ;;
+		esac
+		shift
+	done
+
+	_file=$(authoritative_file)
+	if [ -z "$_file" ]; then
+		if [ "$_json" = 1 ]; then
+			absent_json "$STATE_FILE"
+			printf '\n'
+		else
+			printf 'unknown\n'
+		fi
+		warn "no state file at $STATE_FILE: Cosift may have been configured by hand; run \"$PROG complete\" once the interview is finished"
+		exit "$EX_UNKNOWN"
+	fi
+
+	read_state "$_file"
+	if [ "$_json" = 1 ]; then
+		printf '%s\n' "$READ_JSON"
+	else
+		printf '%s\n' "$READ_WORD"
+	fi
+	case $READ_WORD in
+	pending) exit 0 ;;
+	done | declined) exit "$EX_DONE" ;;
+	*)
+		warn "state file is not parseable: $_file"
+		exit "$EX_MALFORMED"
+		;;
+	esac
+}
+
+cmd_complete() {
+	_force=0
+	_value=true
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--force) _force=1 ;;
+		--declined) _value=declined ;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*) fail "$EX_USAGE" "complete: unknown argument: $1" ;;
+		esac
+		shift
+	done
+
+	_want='done'
+	if [ "$_value" = declined ]; then
+		_want=declined
+	fi
+
+	_file=$(authoritative_file)
+	if [ -n "$_file" ]; then
+		read_state "$_file"
+		if [ "$READ_WORD" = malformed ]; then
+			warn "refusing to write: state file is not parseable: $_file"
+			exit "$EX_MALFORMED"
+		fi
+		if [ "$READ_WORD" = "$_want" ] && [ "$_force" = 0 ]; then
+			printf 'already recorded: %s\n' "$_file"
+			exit 0
+		fi
+	else
+		_file=$OWN_FILE
+	fi
+
+	if [ -z "$PY" ] && [ -f "$_file" ]; then
+		awk -v newval=true -v stamp=x -v version=x "$AWK_SET" "$_file" >/dev/null 2>&1
+		if [ $? = 3 ]; then
+			fail "$EX_MALFORMED" "refusing to edit $_file without python3: the string \"onboarded\" occurs more than once and a blind substitution could corrupt it"
+		fi
+	fi
+
+	_dir=${_file%/*}
+	if [ ! -d "$_dir" ]; then
+		if ! mkdir -p "$_dir" 2>/dev/null; then
+			fail "$EX_WRITE" "cannot create directory: $_dir"
+		fi
+		chmod 0700 "$_dir" 2>/dev/null
+	fi
+
+	if [ -f "$_file" ]; then
+		# At most one backup survives: this runs in the installer's directory,
+		# and a dated copy of account_uid per run would pile up there forever.
+		for _old in "$_file".cosift-backup-*; do
+			if [ -f "$_old" ]; then
+				rm -f "$_old" 2>/dev/null
+			fi
+		done
+		_bak=$(backup_path "$_file")
+		if ! cp -p "$_file" "$_bak" 2>/dev/null; then
+			if ! cp "$_file" "$_bak" 2>/dev/null; then
+				fail "$EX_WRITE" "cannot create backup: $_bak"
+			fi
+		fi
+		chmod 0600 "$_bak" 2>/dev/null
+	else
+		_bak=''
+	fi
+
+	_stamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	_ver=$(version_string)
+
+	if [ -n "$PY" ]; then
+		py_write "$_file" "$_value" "$_stamp" "$_ver"
+		_rc=$?
+		if [ "$_rc" = 3 ]; then
+			warn "refusing to write: state file is not parseable: $_file"
+			exit "$EX_MALFORMED"
+		fi
+		if [ "$_rc" != 0 ]; then
+			fail "$EX_WRITE" "write failed: $_file"
+		fi
+	else
+		posix_write "$_file" "$_value" "$_stamp" "$_ver"
+	fi
+
+	read_state "$_file"
+	if [ "$READ_WORD" != "$_want" ]; then
+		fail "$EX_WRITE" "write did not take effect: $_file"
+	fi
+
+	if [ -n "$_bak" ]; then
+		printf 'recorded: %s onboarded=%s (backup %s)\n' "$_file" "$_value" "$_bak"
+	else
+		printf 'recorded: %s onboarded=%s\n' "$_file" "$_value"
+	fi
+	exit 0
+}
+
+posix_write() {
+	_pw_file=$1
+	_pw_value=$2
+	_pw_stamp=$3
+	_pw_ver=$4
+	_pw_dir=${_pw_file%/*}
+	TMPF="$_pw_dir/.cosift-onboarding.tmp.$$"
+
+	if [ "$_pw_value" = declined ]; then
+		_pw_new='"declined"'
+	else
+		_pw_new=true
+	fi
+
+	if [ -f "$_pw_file" ]; then
+		awk -v newval="$_pw_new" -v stamp="$_pw_stamp" -v version="$_pw_ver" \
+			"$AWK_SET" "$_pw_file" >"$TMPF" 2>/dev/null
+		_pw_rc=$?
+		if [ "$_pw_rc" = 3 ]; then
+			rm -f "$TMPF"
+			TMPF=''
+			warn "refusing to edit $_pw_file without python3: the string \"onboarded\" occurs more than once and a blind substitution could corrupt it"
+			exit "$EX_MALFORMED"
+		fi
+		if [ "$_pw_rc" != 0 ]; then
+			rm -f "$TMPF"
+			TMPF=''
+			fail "$EX_WRITE" "write failed: $_pw_file"
+		fi
+	else
+		{
+			printf '{\n'
+			printf '  "onboarded": %s,\n' "$_pw_new"
+			printf '  "onboarded_at": "%s",\n' "$_pw_stamp"
+			printf '  "onboarding_version": "%s"\n' "$_pw_ver"
+			printf '}\n'
+		} >"$TMPF" 2>/dev/null || {
+			rm -f "$TMPF"
+			TMPF=''
+			fail "$EX_WRITE" "write failed: $_pw_file"
+		}
+	fi
+
+	if ! json_valid "$TMPF"; then
+		rm -f "$TMPF"
+		TMPF=''
+		fail "$EX_WRITE" "refusing to install an unparseable result over $_pw_file"
+	fi
+	chmod 0600 "$TMPF" 2>/dev/null
+	if ! mv "$TMPF" "$_pw_file" 2>/dev/null; then
+		rm -f "$TMPF"
+		TMPF=''
+		fail "$EX_WRITE" "write failed: $_pw_file"
+	fi
+	TMPF=''
+	command -v sync >/dev/null 2>&1 && sync 2>/dev/null
+	return 0
+}
+
+cmd_paths() {
+	_json=0
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--json) _json=1 ;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*) fail "$EX_USAGE" "paths: unknown argument: $1" ;;
+		esac
+		shift
+	done
+
+	_mf=$(manifest_path)
+	_source=builtin
+	_lines=''
+	if [ -n "$_mf" ] && [ -n "$PY" ]; then
+		_lines=$(py_manifest_paths "$_mf" 2>/dev/null)
+		if printf '%s\n' "$_lines" | grep -q '	.' 2>/dev/null; then
+			_source=manifest
+		else
+			_lines=''
+		fi
+	fi
+
+	if [ "$_json" = 1 ]; then
+		printf '{"source":"%s","manifest_path":' "$_source"
+		if [ "$_source" = manifest ]; then
+			printf '"%s"' "$(json_escape "$_mf")"
+		else
+			printf 'null'
+		fi
+		printf ',"paths":{'
+		_first=1
+	fi
+
+	for _h in $HARNESS_LIST; do
+		_p=''
+		if [ "$_source" = manifest ]; then
+			_p=$(printf '%s\n' "$_lines" | awk -F'\t' -v h="$_h" '$1==h {print $2; exit}')
+		fi
+		if [ "$_h" = codex ] && [ -n "${COSIFT_CODEX_SKILLS_DIR:-}" ]; then
+			_p=''
+		fi
+		if [ -n "$_p" ]; then
+			_p=$(expand_path "$_p")
+		else
+			_p=$(default_target "$_h")
+		fi
+		if [ "$_json" = 1 ]; then
+			if [ "$_first" = 0 ]; then
+				printf ','
+			fi
+			_first=0
+			printf '"%s":"%s"' "$_h" "$(json_escape "$_p")"
+		else
+			printf '%s\t%s\n' "$_h" "$_p"
+		fi
+	done
+
+	if [ "$_json" = 1 ]; then
+		printf '}}\n'
+	fi
+	exit 0
+}
+
+# ------------------------------------------------------------------ main --
+
+main() {
+	if [ $# -eq 0 ]; then
+		usage >&2
+		exit "$EX_USAGE"
+	fi
+	_cmd=$1
+	shift
+	case $_cmd in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-V | --version)
+		printf '%s %s\n' "$PROG" "$(version_string)"
+		exit 0
+		;;
+	status | complete | paths) : ;;
+	*)
+		warn "unknown subcommand: $_cmd"
+		usage >&2
+		exit "$EX_USAGE"
+		;;
+	esac
+
+	require_home
+	STATE_FILE="$(cfg_home)/cosift/state.json"
+	OWN_FILE="$(cfg_home)/cosift/onboarding.json"
+	find_python || :
+
+	case $_cmd in
+	status) cmd_status "$@" ;;
+	complete) cmd_complete "$@" ;;
+	paths) cmd_paths "$@" ;;
+	esac
+}
+
+main "$@"

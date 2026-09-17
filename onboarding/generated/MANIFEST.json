@@ -1,0 +1,110 @@
+{
+  "artifact": "cosift-onboarding",
+  "body_sha256": "9b97c2fa9988250436b904bb3d20ac2e793812464d6072bb4a82aed9c09362f1",
+  "body_source": "interview/BODY.md",
+  "dir_mode": "0755",
+  "file_mode": "0644",
+  "generated_root": "generated",
+  "generator": "tools/generate.py",
+  "harnesses": [
+    {
+      "allowed_frontmatter_keys": [
+        "description",
+        "disallowed-tools",
+        "name",
+        "user-invocable"
+      ],
+      "body_sha256": "9b97c2fa9988250436b904bb3d20ac2e793812464d6072bb4a82aed9c09362f1",
+      "dir_mode": "0755",
+      "file_mode": "0644",
+      "frontmatter_keys": [
+        "name",
+        "description",
+        "user-invocable",
+        "disallowed-tools"
+      ],
+      "generated_path": "generated/claude/cosift-onboarding/SKILL.md",
+      "harness": "claude",
+      "install_path": "$HOME/.claude/skills/cosift-onboarding/SKILL.md",
+      "invocation": "/cosift-onboarding",
+      "owned_dir": "$HOME/.claude/skills/cosift-onboarding",
+      "prefix_bytes": 575,
+      "prefix_sha256": "ffa8a6153fe3a93b45730e9bff4be81d4bdfff47c8ac75ffa9901d7bfc6040f1",
+      "sha256": "179f922ab58bf60a2a7b009ce562ac338b311692d2fcae35202e617d4725cc1f",
+      "shared_parent": "$HOME/.claude/skills",
+      "verified": true
+    },
+    {
+      "allowed_frontmatter_keys": [
+        "description",
+        "name"
+      ],
+      "body_sha256": "9b97c2fa9988250436b904bb3d20ac2e793812464d6072bb4a82aed9c09362f1",
+      "dir_mode": "0755",
+      "file_mode": "0644",
+      "frontmatter_keys": [
+        "name",
+        "description"
+      ],
+      "generated_path": "generated/codex/cosift-onboarding/SKILL.md",
+      "harness": "codex",
+      "install_path": "$HOME/.agents/skills/cosift-onboarding/SKILL.md",
+      "invocation": "$cosift-onboarding",
+      "owned_dir": "$HOME/.agents/skills/cosift-onboarding",
+      "prefix_bytes": 465,
+      "prefix_sha256": "af0abf3bff2ddf4633a88dba0cfae679a3709e3b92b9f4a2761317a67529c289",
+      "sha256": "85a58afd1f9025564c8f0f7856d3b8d939b721f35039ccd9254f93005da56cb7",
+      "shared_parent": "$HOME/.agents/skills",
+      "verified": false
+    },
+    {
+      "allowed_frontmatter_keys": [
+        "description",
+        "metadata",
+        "name",
+        "version"
+      ],
+      "body_sha256": "9b97c2fa9988250436b904bb3d20ac2e793812464d6072bb4a82aed9c09362f1",
+      "dir_mode": "0755",
+      "file_mode": "0644",
+      "frontmatter_keys": [
+        "name",
+        "description",
+        "version",
+        "metadata"
+      ],
+      "generated_path": "generated/hermes/cosift-onboarding/SKILL.md",
+      "harness": "hermes",
+      "install_path": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-onboarding/SKILL.md",
+      "invocation": "/cosift-onboarding",
+      "owned_dir": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-onboarding",
+      "prefix_bytes": 847,
+      "prefix_sha256": "1a2fa0493297897508e238ac2de6853732176aa9d42298158face956e75de313",
+      "sha256": "01f3b24cd6c3ff6e7ec9c1fe0ec82bc657ac7fd25ede4976cd1a0bae2dc9e556",
+      "shared_parent": "${HERMES_HOME:-$HOME/.hermes}/skills",
+      "verified": false
+    },
+    {
+      "allowed_frontmatter_keys": [
+        "description"
+      ],
+      "body_sha256": "9b97c2fa9988250436b904bb3d20ac2e793812464d6072bb4a82aed9c09362f1",
+      "dir_mode": "0755",
+      "file_mode": "0644",
+      "frontmatter_keys": [
+        "description"
+      ],
+      "generated_path": "generated/opencode/cosift-onboarding.md",
+      "harness": "opencode",
+      "install_path": "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands/cosift-onboarding.md",
+      "invocation": "/cosift-onboarding",
+      "owned_dir": null,
+      "prefix_bytes": 389,
+      "prefix_sha256": "b9688991508f0a4f6f17baf0bed5a4efb33382cc7d5a8e6f68793f46a5701b83",
+      "sha256": "d1015854426d6d8b8d43b0cc99c4182578d81009ab1abc7a85e0490d8d496b9c",
+      "shared_parent": "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands",
+      "verified": true
+    }
+  ],
+  "version": "1.0.0"
+}

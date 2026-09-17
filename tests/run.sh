@@ -58,6 +58,17 @@ CASE_TABLE=(
   "C36|token-bearing-configs-tightened-to-0600|tester"
   "C37|same-second-backups-are-not-lost|tester"
   "C38|uninstall-leaves-no-project-scoped-credential|tester"
+  "C39|onboarding-clean-install-writes-three-artifacts|tester"
+  "C40|onboarding-second-run-is-a-noop|tester"
+  "C41|onboarding-dry-run-writes-nothing|tester"
+  "C42|onboarding-uninstall-keeps-the-shared-dirs|tester"
+  "C43|onboarding-never-touches-an-always-loaded-file|tester"
+  "C44|onboarding-foreign-artifact-backed-up-first|tester"
+  "C45|onboarding-declined-writes-nothing|tester"
+  "C46|onboarding-harness-discovery|tester"
+  "C47|onboarding-state-command-status-and-complete|tester"
+  "C48|onboarding-never-writes-through-a-link|tester"
+  "C49|uninstall-finds-artifacts-state-forgot|tester"
 )
 
 # =====================================================================
@@ -66,6 +77,7 @@ CASE_TABLE=(
 
 A_PASS=0
 A_FAIL=0
+A_SKIP=0
 
 chk() { # chk <desc> <rc>
   if [ "$2" -eq 0 ]; then
@@ -114,6 +126,31 @@ chk_file_mode() { # chk_file_mode <desc> <path> <mode>
   local m
   m=$(stat -c '%a' "$2" 2>/dev/null)
   chk_eq "$1" "$3" "${m:-MISSING}"
+}
+
+# a check that could not be made at all -- never counts as a pass
+chk_skip() { # chk_skip <desc> [detail ...]
+  printf '    SKIP  %s\n' "$1"
+  shift
+  local d
+  for d in "$@"; do printf '          %s\n' "$d"; done
+  A_SKIP=$((A_SKIP + 1))
+}
+
+chk_same_bytes() { # chk_same_bytes <desc> <path> <want-path>
+  if [ ! -e "$2" ]; then
+    printf '    FAIL  %s: missing %s\n' "$1" "$2"
+    A_FAIL=$((A_FAIL + 1))
+  elif cmp -s "$2" "$3"; then
+    chk "$1" 0
+  else
+    printf '    FAIL  %s: %s differs from %s\n' "$1" "$2" "$3"
+    A_FAIL=$((A_FAIL + 1))
+  fi
+}
+
+chk_exists() { # chk_exists <desc> <path> <yes|no>
+  chk_eq "$1" "$3" "$([ -e "$2" ] && echo yes || echo no)"
 }
 
 TH=/tmp/cosift-test/th.py
@@ -205,7 +242,7 @@ def all_paths(log):
         print("%s %s %s" % (r.get("method"), r.get("path"), r.get("status")))
 
 
-def state_check(path, csv_harnesses, version_hint):
+def state_check(path, csv_harnesses, version_hint, csv_onboarding="?"):
     probs = []
     if not os.path.exists(path):
         print("problem: state.json missing at %s" % path)
@@ -225,6 +262,8 @@ def state_check(path, csv_harnesses, version_hint):
         "harnesses_configured",
         "onboarded",
         "installed_at",
+        "onboarding_installed",
+        "onboarding_cmd",
     }
     got_keys = set(doc)
     if got_keys != want_keys:
@@ -249,6 +288,26 @@ def state_check(path, csv_harnesses, version_hint):
             probs.append("harnesses_configured %s, want %s" % (sorted(hs), sorted(want)))
     if doc.get("onboarded") is not False:
         probs.append("onboarded must be literal false")
+    oi = doc.get("onboarding_installed")
+    if not isinstance(oi, list) or not all(isinstance(x, str) for x in oi):
+        probs.append("onboarding_installed must be a list of strings")
+    else:
+        if isinstance(hs, list) and not set(oi) <= set(hs):
+            probs.append(
+                "onboarding_installed %s is not a subset of harnesses_configured %s"
+                % (sorted(oi), sorted(hs))
+            )
+        if csv_onboarding != "?":
+            want = set(x for x in csv_onboarding.split(",") if x)
+            if set(oi) != want:
+                probs.append(
+                    "onboarding_installed %s, want %s" % (sorted(oi), sorted(want))
+                )
+    oc = doc.get("onboarding_cmd")
+    if not isinstance(oc, str):
+        probs.append("onboarding_cmd must be a string")
+    elif oi and not oc.endswith("/.local/bin/cosift-onboarding"):
+        probs.append("onboarding_cmd %r is not the documented command path" % (oc,))
     ia = doc.get("installed_at")
     if not isinstance(ia, str) or not re.match(
         r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$", ia
@@ -259,6 +318,26 @@ def state_check(path, csv_harnesses, version_hint):
             print("problem: %s" % p)
         return 1
     print("ok")
+    return 0
+
+
+def json_get(path, *keys):
+    if not os.path.exists(path):
+        print("NOFILE")
+        return 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except ValueError:
+        print("PARSE_ERROR")
+        return 0
+    for k in keys:
+        if k not in doc:
+            print("MISSING")
+        elif isinstance(doc[k], str):
+            print(doc[k])
+        else:
+            print(json.dumps(doc[k], sort_keys=True))
     return 0
 
 
@@ -417,6 +496,7 @@ CMDS = {
     "req-bodies": req_bodies,
     "all-paths": all_paths,
     "state-check": state_check,
+    "json-get": json_get,
     "claude-entry": claude_entry,
     "claude-names": claude_names,
     "toml-entry": toml_entry,
@@ -721,6 +801,91 @@ assert_others_survive() {
 
 EMAIL="tester+cosift@example.com"
 
+# ---------------------------------------------------------------------
+# onboarding interview artifacts
+# ---------------------------------------------------------------------
+
+ONB_GEN=/work/onboarding/generated
+ONB_CMD_SRC=/work/onboarding/bin/cosift-onboarding
+
+onb_artifact() { # onb_artifact <harness>
+  case "$1" in
+    claude)   printf '%s\n' "$HOME/.claude/skills/cosift-onboarding/SKILL.md" ;;
+    codex)    printf '%s\n' \
+                "${COSIFT_CODEX_SKILLS_DIR:-$HOME/.agents/skills}/cosift-onboarding/SKILL.md" ;;
+    opencode) printf '%s\n' \
+                "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands/cosift-onboarding.md" ;;
+  esac
+}
+
+onb_source() { # the exact bytes that must land at onb_artifact <harness>
+  case "$1" in
+    claude)   printf '%s\n' "$ONB_GEN/claude/cosift-onboarding/SKILL.md" ;;
+    codex)    printf '%s\n' "$ONB_GEN/codex/cosift-onboarding/SKILL.md" ;;
+    opencode) printf '%s\n' "$ONB_GEN/opencode/cosift-onboarding.md" ;;
+  esac
+}
+
+# empty for opencode: its file sits directly in the shared commands/ directory
+onb_owned_dir() { # onb_owned_dir <harness>
+  case "$1" in
+    claude) printf '%s\n' "$HOME/.claude/skills/cosift-onboarding" ;;
+    codex)  printf '%s\n' \
+              "${COSIFT_CODEX_SKILLS_DIR:-$HOME/.agents/skills}/cosift-onboarding" ;;
+  esac
+}
+
+onb_shared_parent() { # onb_shared_parent <harness>
+  case "$1" in
+    claude)   printf '%s\n' "$HOME/.claude/skills" ;;
+    codex)    printf '%s\n' "${COSIFT_CODEX_SKILLS_DIR:-$HOME/.agents/skills}" ;;
+    opencode) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands" ;;
+  esac
+}
+
+onb_cmd() { printf '%s\n' "$HOME/.local/bin/cosift-onboarding"; }
+
+onb_cmd_source() { printf '%s\n' "${ONB_GEN%/generated}/bin/cosift-onboarding"; }
+
+onb_json() { printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/cosift/onboarding.json"; }
+
+onb_backups() { # onb_backups <harness>
+  local p
+  p=$(onb_artifact "$1")
+  find "${p%/*}" -name "${p##*/}.cosift-backup-*" 2>/dev/null | sort
+}
+
+assert_onboarding_installed() { # assert_onboarding_installed <harness> ...
+  local h p d
+  for h in "$@"; do
+    p=$(onb_artifact "$h")
+    chk_same_bytes "$h: artifact matches generated/$h byte for byte" "$p" "$(onb_source "$h")"
+    chk_file_mode "$h: artifact is 0644" "$p" 644
+    d=$(onb_owned_dir "$h")
+    [ -n "$d" ] && chk_file_mode "$h: owned dir is 0755" "$d" 755
+    chk_file_mode "$h: shared parent is 0755" "$(onb_shared_parent "$h")" 755
+  done
+}
+
+assert_onboarding_absent() { # assert_onboarding_absent <harness> ...
+  local h
+  for h in "$@"; do
+    chk_exists "$h: no artifact at $(onb_artifact "$h")" "$(onb_artifact "$h")" no
+  done
+}
+
+assert_cmd_installed() {
+  chk_same_bytes "state command is the shipped cosift-onboarding" \
+    "$(onb_cmd)" "$ONB_CMD_SRC"
+  chk_file_mode "state command is 0755" "$(onb_cmd)" 755
+}
+
+onb_is_stub() { # onb_is_stub <harness>
+  local up
+  up=$(printf '%s' "$1" | tr 'a-z' 'A-Z')
+  grep -q "^${up}_PROVENANCE=stub$" /opt/cosift-test/harness-provenance.env 2>/dev/null
+}
+
 # =====================================================================
 # cases
 # =====================================================================
@@ -738,7 +903,8 @@ case_C01() {
   local vers
   vers=$(installer_version)
   chk_eq "state.json shape/mode" "ok" \
-    "$(python3 "$TH" state-check "$(state_path)" "claude,codex,opencode" "$vers")"
+    "$(python3 "$TH" state-check "$(state_path)" "claude,codex,opencode" "$vers" \
+       "claude,codex,opencode")"
   chk_file_mode "state.json is 0600" "$(state_path)" 600
 
   chk_eq "exactly one /auth/start" 1 "$(nreq POST /auth/start)"
@@ -871,7 +1037,9 @@ refuse_case() { # refuse_case <fixture> <dest> <harness-list>
   local before
   before=$(sha_of "$2")
   mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
-  PTY_LINES="$EMAIL
+  # no --yes: the consent prompt comes at harness selection, before the email
+  PTY_LINES="y
+$EMAIL
 123456"
   install_pty "--harness=$3"
   chk_eq "exit code is 5 (refusal)" 5 "$RC"
@@ -1146,7 +1314,8 @@ case_C22() {
   mock_start ok || return 1
   set_paths
   mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
-  PTY_LINES="$EMAIL
+  PTY_LINES="y
+$EMAIL
 123456"
   install_pty --harness=claude,codex
   chk_eq "exit code" 0 "$RC"
@@ -1159,7 +1328,7 @@ case_C22() {
     "$([ -f "$XDG_CONFIG_HOME/cosift/state.json" ] && echo yes || echo no)"
   chk_eq "state lists exactly the two selected harnesses" "ok" \
     "$(python3 "$TH" state-check "$XDG_CONFIG_HOME/cosift/state.json" \
-       "claude,codex" "$(installer_version)")"
+       "claude,codex" "$(installer_version)" "claude,codex")"
   unset XDG_CONFIG_HOME
   mock_stop
 }
@@ -1296,6 +1465,9 @@ $OPENCODE_CFG"
     # harness-owned caches/logs are the harness's business, not the installer's
     case "$f" in
       *.cosift-backup-*) continue ;;
+      # The onboarding paths are ours, so they stay in scope even though they sit
+      # under directories the harnesses otherwise own.
+      "$HOME"/.claude/skills/*|"$HOME"/.local/bin/*) ;;
       "$HOME"/.claude/*|"$HOME"/.codex/*|"$HOME"/.cache/*) continue ;;
       "$HOME"/.local/share/opencode/*|"$HOME"/.local/state/*) continue ;;
     esac
@@ -1332,7 +1504,8 @@ case_C31() {
   local before
   before=$(sha_of "$CODEX_CFG")
   mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
-  PTY_LINES="$EMAIL
+  PTY_LINES="y
+$EMAIL
 123456"
   install_pty --harness=codex
   chk_eq "exit code is 5 (refusal)" 5 "$RC"
@@ -1358,7 +1531,8 @@ foreign_table_case() { # foreign_table_case <fixture> <label>
   local before oldpath
   before=$(sha_of "$CODEX_CFG")
   mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
-  PTY_LINES="$EMAIL
+  PTY_LINES="y
+$EMAIL
 123456"
   oldpath="$PATH"
   export PATH=/usr/bin:/bin
@@ -1519,7 +1693,8 @@ case_C36() {
   chmod 0644 "$CODEX_CFG"
   chk_file_mode "the pre-existing config starts out world-readable" "$CODEX_CFG" 644
   mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
-  PTY_LINES="$EMAIL
+  PTY_LINES="y
+$EMAIL
 123456"
   install_pty --harness=codex
   chk_eq "exit code" 0 "$RC"
@@ -1559,7 +1734,8 @@ DATEEOF
   oldpath="$PATH"
   mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
 
-  PTY_LINES="$EMAIL
+  PTY_LINES="y
+$EMAIL
 123456"
   export PATH="$HOME/bin:$oldpath"
   install_pty --harness=codex
@@ -1588,6 +1764,479 @@ DATEEOF
   mock_stop
 }
 
+case_C39() {
+  mock_start ok || return 1
+  set_paths
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes            # --yes implies --onboarding
+  chk_eq "exit code" 0 "$RC"
+  assert_installed claude codex opencode
+  assert_onboarding_installed claude codex opencode
+  assert_cmd_installed
+
+  chk_exists "codex artifact was not written under \$CODEX_HOME" \
+    "${CODEX_HOME:-$HOME/.codex}/skills/cosift-onboarding" no
+  chk_eq "state.json shape/mode with the onboarding keys" "ok" \
+    "$(python3 "$TH" state-check "$(state_path)" "claude,codex,opencode" \
+       "$(installer_version)" "claude,codex,opencode")"
+  chk_eq "state records the command path" "$(onb_cmd)" \
+    "$(python3 "$TH" json-get "$(state_path)" onboarding_cmd)"
+  chk_contains "summary shows the slash invocation" "$OUT" "/cosift-onboarding"
+  chk_contains "summary shows the codex invocation" "$OUT" "\$cosift-onboarding"
+  chk_eq "no artifact was backed up on a clean box" "" \
+    "$(onb_backups claude)$(onb_backups codex)$(onb_backups opencode)"
+
+  # the codex skills root is overridable and is not under $CODEX_HOME
+  export COSIFT_CODEX_SKILLS_DIR="$HOME/alt-agents/skills"
+  PTY_LINES=""
+  install_notty --yes
+  chk_eq "override run exit code" 0 "$RC"
+  assert_onboarding_installed codex
+  unset COSIFT_CODEX_SKILLS_DIR
+  mock_stop
+}
+
+case_C40() {
+  mock_start ok || return 1
+  set_paths
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "first run exit code" 0 "$RC"
+  assert_onboarding_installed claude codex opencode
+  local b1 m1
+  b1=$(backup_list | wc -l)
+  # state.json holds installed_at, which a second install legitimately refreshes
+  m1=$(manifest_of | grep -v 'cosift/state.json')
+
+  PTY_LINES=""
+  install_notty --yes
+  chk_eq "second run exit code" 0 "$RC"
+  assert_onboarding_installed claude codex opencode
+  assert_cmd_installed
+  chk_eq "no artifact grew a backup on the second run" "" \
+    "$(onb_backups claude)$(onb_backups codex)$(onb_backups opencode)"
+  chk_eq "backup count unchanged by the no-op run" "$b1" "$(backup_list | wc -l)"
+  chk_eq "\$HOME is byte-identical, state.json aside, after the second run" "" \
+    "$(diff <(printf '%s\n' "$m1") \
+        <(printf '%s\n' "$(manifest_of | grep -v 'cosift/state.json')") | head -40)"
+  chk_matches "the second run reports the artifacts are already up to date" "$OUT" \
+    "up to date"
+  mock_stop
+}
+
+case_C41() {
+  mock_start ok || return 1
+  set_paths
+  seed_all_fixtures
+  # the shared dirs exist beforehand so a stray write lands inside the manifest
+  mkdir -p "$HOME/.claude/skills" "$HOME/.agents/skills" \
+           "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands" "$HOME/.local/bin"
+  cd "$HOME" || return 1
+  local before after
+  before=$(manifest_of)
+  install_notty --dry-run --yes
+  chk_eq "exit code" 0 "$RC"
+  after=$(manifest_of)
+  chk_eq "\$HOME is byte-identical after --dry-run" "" \
+    "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -40)"
+  assert_onboarding_absent claude codex opencode
+  chk_exists "no state command" "$(onb_cmd)" no
+  chk_exists "no owned dir for claude" "$(onb_owned_dir claude)" no
+  chk_exists "no owned dir for codex" "$(onb_owned_dir codex)" no
+  chk_eq "no backups created" 0 "$(backup_list | wc -l)"
+  chk_matches "the plan mentions the onboarding interview" "$OUT" "onboarding"
+  mock_stop
+}
+
+case_C42() {
+  mock_start ok || return 1
+  set_paths
+  mkdir -p "$HOME/.local/bin" && : >"$HOME/.local/bin/keepme"
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "install exit code" 0 "$RC"
+  assert_onboarding_installed claude codex opencode
+  assert_cmd_installed
+  # what the state command leaves behind when state.json is absent
+  printf '{"onboarded":true,"onboarding_version":"1.0.0"}\n' >"$(onb_json)"
+
+  PTY_LINES=""
+  install_notty --uninstall
+  chk_eq "uninstall exit code" 0 "$RC"
+  assert_onboarding_absent claude codex opencode
+  chk_exists "claude: the owned dir is gone" "$(onb_owned_dir claude)" no
+  chk_exists "codex: the owned dir is gone" "$(onb_owned_dir codex)" no
+  chk_exists "the state command is gone" "$(onb_cmd)" no
+  chk_exists "onboarding.json is gone" "$(onb_json)" no
+  chk_exists "state.json is gone" "$(state_path)" no
+  local h
+  for h in claude codex opencode; do
+    chk_exists "$h: the shared parent survives an empty uninstall" \
+      "$(onb_shared_parent "$h")" yes
+  done
+  chk_exists "an unrelated file in ~/.local/bin survives" "$HOME/.local/bin/keepme" yes
+  mock_stop
+}
+
+# The artifact must never be written into a file a harness always loads.
+DENY_FILES="CLAUDE.md
+.claude/CLAUDE.md
+AGENTS.md
+AGENTS.override.md
+SOUL.md
+.codex/AGENTS.md
+.codex/AGENTS.override.md
+.agents/AGENTS.md
+.agents/skills/AGENTS.md
+.config/opencode/AGENTS.md
+.config/opencode/commands/AGENTS.md
+.config/opencode/SOUL.md
+work/CLAUDE.md
+work/AGENTS.md
+work/AGENTS.override.md
+work/SOUL.md"
+
+deny_shas() {
+  local rel
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    printf '%s %s\n' "$rel" "$(sha_of "$HOME/$rel")"
+  done <<<"$DENY_FILES"
+}
+
+case_C43() {
+  mock_start ok || return 1
+  set_paths
+  local rel
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    case "$rel" in */*) mkdir -p "$HOME/${rel%/*}" ;; esac
+    printf 'KEEPME-DENYLIST %s\nalways loaded; never ours to edit.\n' "$rel" \
+      >"$HOME/$rel"
+  done <<<"$DENY_FILES"
+  local before
+  before=$(deny_shas)
+
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "install exit code" 0 "$RC"
+  assert_onboarding_installed claude codex opencode
+  chk_eq "every always-loaded file is byte-identical after install" "" \
+    "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$(deny_shas)") | head -40)"
+  local tainted=""
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    grep -qF "cosift-onboarding" "$HOME/$rel" 2>/dev/null && tainted="$tainted$rel "
+  done <<<"$DENY_FILES"
+  chk_eq "no always-loaded file mentions the interview" "" "$tainted"
+
+  PTY_LINES=""
+  install_notty --uninstall
+  chk_eq "uninstall exit code" 0 "$RC"
+  chk_eq "every always-loaded file is byte-identical after uninstall" "" \
+    "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$(deny_shas)") | head -40)"
+  mock_stop
+}
+
+case_C44() {
+  mock_start ok || return 1
+  set_paths
+  local h p
+  for h in claude codex opencode; do
+    p=$(onb_artifact "$h")
+    mkdir -p "${p%/*}"
+    fixture onboarding/foreign.skill.md "$p"
+    printf 'harness marker: %s\n' "$h" >>"$p"
+  done
+  local claude_before codex_before oc_before
+  claude_before=$(sha_of "$(onb_artifact claude)")
+  codex_before=$(sha_of "$(onb_artifact codex)")
+  oc_before=$(sha_of "$(onb_artifact opencode)")
+
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "exit code" 0 "$RC"
+  assert_onboarding_installed claude codex opencode
+  backups_wellformed
+  chk "every backup name matches <path>.cosift-backup-<UTC>" $?
+
+  chk_eq "claude: exactly one backup of the foreign file" 1 "$(onb_backups claude | wc -l)"
+  chk_eq "codex: exactly one backup of the foreign file" 1 "$(onb_backups codex | wc -l)"
+  chk_eq "opencode: exactly one backup of the foreign file" 1 \
+    "$(onb_backups opencode | wc -l)"
+  chk_eq "claude: the backup holds the foreign bytes" "$claude_before" \
+    "$(sha_of "$(onb_backups claude | head -1)")"
+  chk_eq "codex: the backup holds the foreign bytes" "$codex_before" \
+    "$(sha_of "$(onb_backups codex | head -1)")"
+  chk_eq "opencode: the backup holds the foreign bytes" "$oc_before" \
+    "$(sha_of "$(onb_backups opencode | head -1)")"
+  chk_matches "stdout says a file was backed up" "$OUT" "backed up|backup"
+  chk_contains "stdout names the file it replaced" "$OUT" "cosift-onboarding"
+  mock_stop
+}
+
+case_C45() {
+  mock_start ok || return 1
+  set_paths
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --no-onboarding --harness=claude,codex,opencode
+  chk_eq "--no-onboarding exit code" 0 "$RC"
+  assert_installed claude codex opencode
+  assert_onboarding_absent claude codex opencode
+  chk_exists "--no-onboarding wrote no state command" "$(onb_cmd)" no
+  chk_eq "state records no onboarding harnesses" "[]" \
+    "$(python3 "$TH" json-get "$(state_path)" onboarding_installed)"
+
+  # no flag and no usable tty: skip, and never write without consent
+  PTY_LINES=""
+  install_notty --harness=claude
+  chk "no-tty run ended 0 (skipped) or 6 (needs a tty), not in a write" \
+    "$([ "$RC" -eq 0 ] || [ "$RC" -eq 6 ] && echo 0 || echo 1)"
+  assert_onboarding_absent claude codex opencode
+  chk_exists "no-tty run wrote no state command" "$(onb_cmd)" no
+  if [ "$RC" -eq 0 ]; then
+    chk_contains "tells the user how to add it later" "$OUT" "--onboarding"
+  fi
+
+  local before
+  before=$(manifest_of)
+  install_notty --onboarding --no-onboarding
+  chk_eq "both onboarding flags together is a usage error" 2 "$RC"
+  chk_eq "the usage error wrote nothing" "" \
+    "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$(manifest_of)") | head -20)"
+  mock_stop
+}
+
+case_C46() {
+  mock_start ok || return 1
+  set_paths
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "install exit code" 0 "$RC"
+  assert_onboarding_installed claude codex opencode
+
+  local desc
+  desc=$(sed -n 's/^description: //p' "$(onb_source opencode)" | head -1 | cut -c1-60)
+
+  if onb_is_stub opencode; then
+    chk_skip "opencode discovery: the image fell back to the stub CLI" \
+      "DISCOVERY: UNPROVEN (opencode)"
+  else
+    local port=4599 log=/tmp/cosift-test/opencode-serve.log body="" sp i
+    opencode serve --pure --hostname 127.0.0.1 --port "$port" >"$log" 2>&1 &
+    sp=$!
+    for i in $(seq 1 60); do
+      body=$(curl -fsS "http://127.0.0.1:$port/command" 2>/dev/null) || body=""
+      [ -n "$body" ] && break
+      sleep 0.5
+    done
+    kill "$sp" 2>/dev/null
+    wait "$sp" 2>/dev/null
+    if [ -z "$body" ]; then
+      chk_skip "opencode discovery: 'opencode serve --pure' served no /command listing" \
+        "DISCOVERY: UNPROVEN (opencode)" \
+        "serve log: $(tail -3 "$log" 2>/dev/null | tr '\n' ' ')"
+    else
+      chk_contains "opencode lists /cosift-onboarding" "$body" "cosift-onboarding"
+      chk_contains "opencode read our file (description matches)" "$body" "$desc"
+    fi
+  fi
+
+  if onb_is_stub codex; then
+    chk_skip "codex discovery: the image fell back to the stub CLI" \
+      "DISCOVERY: UNPROVEN (codex)"
+  else
+    local cout crc
+    cout=$(timeout 90 codex debug prompt-input 2>&1)
+    crc=$?
+    if [ "$crc" -ne 0 ]; then
+      chk_skip "codex discovery: 'codex debug prompt-input' is unavailable (exit $crc)" \
+        "DISCOVERY: UNPROVEN (codex)" \
+        "codex said: $(printf '%s' "$cout" | head -3 | tr '\n' ' ')"
+    else
+      chk_contains "codex renders the skill from the ~/.agents/skills root" \
+        "$cout" "cosift-onboarding"
+    fi
+  fi
+
+  # Claude Code 2.x exposes no no-auth listing of installed skills
+  chk_skip "claude discovery: no no-auth listing exists to ask" \
+    "DISCOVERY: UNPROVEN (claude)"
+  mock_stop
+}
+
+case_C47() {
+  mock_start ok || return 1
+  set_paths
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "install exit code" 0 "$RC"
+  assert_cmd_installed
+
+  local cmd state out rc
+  cmd=$(onb_cmd)
+  state=$(state_path)
+  cp "$state" /tmp/cosift-test/c47-fresh.json
+
+  out=$("$cmd" status 2>/dev/null); rc=$?
+  chk_eq "status word on a fresh install" "pending" "$out"
+  chk_eq "status exit code on a fresh install" 0 "$rc"
+
+  out=$("$cmd" complete 2>&1); rc=$?
+  chk_eq "complete exit code" 0 "$rc"
+  chk_eq "complete set onboarded true" "true" \
+    "$(python3 "$TH" json-get "$state" onboarded)"
+  chk_matches "complete stamped onboarded_at" \
+    "$(python3 "$TH" json-get "$state" onboarded_at)" \
+    "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+  chk_not_contains "complete recorded the version it ran" \
+    "$(python3 "$TH" json-get "$state" onboarding_version)" "MISSING"
+  chk_eq "complete preserved account_uid" \
+    "$(python3 "$TH" json-get /tmp/cosift-test/c47-fresh.json account_uid)" \
+    "$(python3 "$TH" json-get "$state" account_uid)"
+  chk_eq "complete preserved harnesses_configured" \
+    "$(python3 "$TH" json-get /tmp/cosift-test/c47-fresh.json harnesses_configured)" \
+    "$(python3 "$TH" json-get "$state" harnesses_configured)"
+  chk_eq "complete preserved onboarding_installed" \
+    "$(python3 "$TH" json-get /tmp/cosift-test/c47-fresh.json onboarding_installed)" \
+    "$(python3 "$TH" json-get "$state" onboarding_installed)"
+
+  out=$("$cmd" status 2>/dev/null); rc=$?
+  chk_eq "status word once complete has run" "done" "$out"
+  chk_eq "status exit code once complete has run" 1 "$rc"
+
+  cp /tmp/cosift-test/c47-fresh.json "$state"
+  out=$("$cmd" complete --declined 2>&1); rc=$?
+  chk_eq "complete --declined exit code" 0 "$rc"
+  out=$("$cmd" status 2>/dev/null); rc=$?
+  chk_eq "status word after a decline" "declined" "$out"
+  chk_eq "status exit code after a decline" 1 "$rc"
+
+  printf '{ "version": 1, "onboarded": false,\n' >"$state"
+  out=$("$cmd" status 2>/dev/null); rc=$?
+  chk_eq "status word on a malformed state file" "malformed" "$out"
+  chk_eq "status exit code on a malformed state file" 3 "$rc"
+
+  rm -f "$state" "$(onb_json)"
+  out=$("$cmd" status 2>/dev/null); rc=$?
+  chk_eq "status word with no state file at all" "unknown" "$out"
+  chk_eq "status exit code with no state file at all" 2 "$rc"
+  mock_stop
+}
+
+case_C48() { # writing in place follows both symlinks and hard links to their target
+  mock_start ok || return 1
+  set_paths
+
+  # claude: a symlink at the artifact path, aimed at the one class of file this artifact
+  # must never be written into.
+  mkdir -p "$HOME/.claude/skills/cosift-onboarding" "$HOME/.local/bin"
+  printf 'KEEPME always-loaded instructions\n' >"$HOME/.claude/CLAUDE.md"
+  ln -s "$HOME/.claude/CLAUDE.md" "$(onb_artifact claude)"
+  # codex: a hard link, which no -L test can see. A home restored from an
+  # rsync --link-dest snapshot is a hard-link farm, so this is not only an attack.
+  mkdir -p "$(onb_owned_dir codex)"
+  printf 'KEEPME hard-linked instructions\n' >"$HOME/.agents/AGENTS.md"
+  ln "$HOME/.agents/AGENTS.md" "$(onb_artifact codex)"
+  # the state command: also a hard link, into a directory full of other tools
+  printf '#!/bin/sh\necho someone elses tool\n' >"$HOME/othertool"
+  chmod 755 "$HOME/othertool"
+  ln "$HOME/othertool" "$(onb_cmd)"
+
+  local claude_md_before agents_md_before othertool_before
+  claude_md_before=$(sha_of "$HOME/.claude/CLAUDE.md")
+  agents_md_before=$(sha_of "$HOME/.agents/AGENTS.md")
+  othertool_before=$(sha_of "$HOME/othertool")
+
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "install exit code (a link refusal is not fatal)" 0 "$RC"
+
+  chk_eq "the always-loaded file the symlink pointed at is untouched" \
+    "$claude_md_before" "$(sha_of "$HOME/.claude/CLAUDE.md")"
+  chk_eq "the always-loaded file the hard link pointed at is untouched" \
+    "$agents_md_before" "$(sha_of "$HOME/.agents/AGENTS.md")"
+  chk_eq "the binary the state-command hard link pointed at is untouched" \
+    "$othertool_before" "$(sha_of "$HOME/othertool")"
+
+  # A symlink is the user's own decision and is left alone; a hard link is invisible, so
+  # the artifact is placed by rename and simply stops sharing the inode.
+  chk_contains "the symlink refusal names it" "$OUT" "is a symlink"
+  chk_same_bytes "codex received the interview despite the hard link" \
+    "$(onb_artifact codex)" "$(onb_source codex)"
+  chk_same_bytes "the state command was still installed" "$(onb_cmd)" "$(onb_cmd_source)"
+  chk_same_bytes "opencode, with no link planted, was unaffected" \
+    "$(onb_artifact opencode)" "$(onb_source opencode)"
+  chk_eq "no temp file was left beside an artifact" "" \
+    "$(find "$HOME" -name '.cosift-onboarding.*' 2>/dev/null)"
+
+  install_notty --uninstall
+  chk_eq "uninstall exit code" 0 "$RC"
+  chk_exists "uninstall left the foreign symlink in place" "$(onb_artifact claude)" yes
+  chk_eq "and its target is still untouched" \
+    "$claude_md_before" "$(sha_of "$HOME/.claude/CLAUDE.md")"
+  chk_eq "the hard-linked original is still untouched after uninstall" \
+    "$othertool_before" "$(sha_of "$HOME/othertool")"
+  mock_stop
+}
+
+case_C49() { # a later run must not strand interview files the state file has forgotten
+  mock_start ok || return 1
+  set_paths
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "first install exit code" 0 "$RC"
+  assert_onboarding_installed claude codex opencode
+
+  # The ordinary piped re-run: no tty, so consent is skipped and this run records that it
+  # installed nothing. The three files from the first run are still on disk.
+  install_notty --harness=claude
+  chk_eq "re-run exit code" 0 "$RC"
+  chk_contains "the re-run recorded an empty onboarding list" \
+    "$(tr -d ' \n' <"$(state_path)")" '"onboarding_installed":[]'
+
+  local h p left=""
+  for h in claude codex opencode; do
+    p=$(onb_artifact "$h")
+    [ -f "$p" ] && left="$left$h "
+  done
+  chk_eq "the artifacts are still on disk after the re-run" "claude codex opencode " "$left"
+
+  install_notty --uninstall
+  chk_eq "uninstall exit code" 0 "$RC"
+  left=""
+  for h in claude codex opencode; do
+    p=$(onb_artifact "$h")
+    [ -e "$p" ] && left="$left$p "
+  done
+  chk_eq "uninstall removed every artifact, not just the ones state remembered" "" "$left"
+  chk_exists "and the state command" "$(onb_cmd)" no
+  chk_exists "the claude shared parent survives" "$HOME/.claude/skills" yes
+  chk_exists "the codex shared parent survives" "$(onb_shared_parent codex)" yes
+  mock_stop
+}
+
+
 # =====================================================================
 # container entrypoint
 # =====================================================================
@@ -1603,6 +2252,9 @@ run_container_case() {
   "case_$id"
   local rc=$?
   mock_stop
+  if [ "$A_SKIP" -gt 0 ]; then
+    echo "    ####  $A_SKIP check(s) SKIPPED -- NOT proven by this run  ####"
+  fi
   if [ "$A_FAIL" -eq 0 ] && [ "$rc" -eq 0 ]; then
     echo "RESULT $id PASS $A_PASS $A_FAIL"
   else
