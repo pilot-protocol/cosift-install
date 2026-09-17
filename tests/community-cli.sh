@@ -127,6 +127,19 @@ print('{"logged_in":true}')
         self.assertFalse(self.session.exists())
         self.assertFalse(Path(self.env["CLI_CALL_LOG"]).exists())
 
+    def test_release_defaults_use_production_origins_without_network(self):
+        self.env.pop("COSIFT_AUTH_BASE")
+        self.env.pop("COSIFT_MCP_URL")
+        result = self.run_install("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp", result.stdout)
+        help_result = self.run_install("--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("cosift-install 0.4.0", help_result.stdout)
+        self.assertIn("https://cosift-auth-udik5erlkq-uw.a.run.app", help_result.stdout)
+        self.assertFalse(self.session.exists())
+        self.assertFalse(Path(self.env["CLI_CALL_LOG"]).exists())
+
     def test_existing_session_is_never_overwritten(self):
         self.session.parent.mkdir(parents=True)
         self.session.write_text("keep this existing credential")

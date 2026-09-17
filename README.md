@@ -12,6 +12,9 @@ you run it is a reasonable thing to do.
 
 ## Install
 
+This is installer v0.4.0. The `v1` URL follows the current compatible release;
+use `v0.4.0` in its place to pin this version.
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/pilot-protocol/cosift-install/v1/install.sh | sh
 ```
@@ -95,6 +98,11 @@ refuses and exits `5` rather than overwriting it.
 The script contacts the Cosift auth service (`COSIFT_AUTH_BASE`) and the
 Cosift MCP endpoint (`COSIFT_MCP_URL`), both shown in `--help`. When connecting an
 installed CLI, it also verifies the token at the web origin (`COSIFT_COMMUNITY_URL`).
+This release uses the production Cloud Run origins directly:
+`https://cosift-auth-udik5erlkq-uw.a.run.app` and
+`https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp`. The stable custom auth/MCP
+domains can replace them once DNS is configured; environment overrides remain
+available for a different deployment.
 It sends your email address
 to the auth service in order to email you a code, and it sends the credential to the MCP
 endpoint to check that it works.
@@ -136,9 +144,8 @@ The installer configures agents; the [web app](https://cosift.pilotprotocol.netw
 provides Search, Answer, Research, saved requests, followed topics, contributions
 and credits. Sign in there with the email used during installation.
 
-Install the current signed binary for your platform from
-[Cosift releases](https://github.com/pilot-protocol/cosift/releases), verify its
-checksum and minisign signature using the release instructions, then rerun:
+Install the signed v0.2.7 binary for your platform using the
+[CLI download and verification instructions](docs/CLI-INSTALL.md), then rerun:
 
 ```sh
 sh install.sh --cli

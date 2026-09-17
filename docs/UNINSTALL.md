@@ -81,7 +81,7 @@ If you must edit the file by hand, the entry is the `"cosift"` key of the top-le
 ```json
 "cosift": {
   "type": "http",
-  "url": "https://cosift-mcp.pilotprotocol.network/v1/mcp",
+  "url": "https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp",
   "headers": { "Authorization": "Bearer ck_..." }
 }
 ```
@@ -101,7 +101,7 @@ comments included:
 ```toml
 # >>> cosift (managed by cosift-install — do not edit)
 [mcp_servers.cosift]
-url = "https://cosift-mcp.pilotprotocol.network/v1/mcp"
+url = "https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp"
 [mcp_servers.cosift.http_headers]
 Authorization = "Bearer ck_..."
 # <<< cosift
@@ -150,7 +150,7 @@ like this:
     },
     "cosift": {
       "type": "remote",
-      "url": "https://cosift-mcp.pilotprotocol.network/v1/mcp",
+      "url": "https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp",
       "headers": { "Authorization": "Bearer ck_..." }
     }
   }

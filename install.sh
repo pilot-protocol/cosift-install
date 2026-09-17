@@ -45,7 +45,7 @@
 #
 # POSIX sh only (this runs under dash via curl | sh).  No bashisms.
 
-VERSION="0.1.0"
+VERSION="0.4.0"
 
 umask 077
 
@@ -57,8 +57,8 @@ fi
 
 # ---------------------------------------------------------------- configuration
 
-COSIFT_AUTH_BASE="${COSIFT_AUTH_BASE:-https://cosift-auth.pilotprotocol.network}"
-COSIFT_MCP_URL="${COSIFT_MCP_URL:-https://cosift-mcp.pilotprotocol.network/v1/mcp}"
+COSIFT_AUTH_BASE="${COSIFT_AUTH_BASE:-https://cosift-auth-udik5erlkq-uw.a.run.app}"
+COSIFT_MCP_URL="${COSIFT_MCP_URL:-https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp}"
 COSIFT_COMMUNITY_URL="${COSIFT_COMMUNITY_URL:-https://cosift.pilotprotocol.network}"
 COSIFT_EXTRA_HEADER="${COSIFT_EXTRA_HEADER:-}"
 
@@ -3911,9 +3911,9 @@ THE ONBOARDING INTERVIEW
 
 ENVIRONMENT
   COSIFT_AUTH_BASE      override the auth base URL
-                        (default: https://cosift-auth.pilotprotocol.network)
+                        (default: https://cosift-auth-udik5erlkq-uw.a.run.app)
   COSIFT_MCP_URL        override the MCP URL
-                        (default: https://cosift-mcp.pilotprotocol.network/v1/mcp)
+                        (default: https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp)
   COSIFT_COMMUNITY_URL  web and CLI origin; HTTPS required except localhost
                         (default: https://cosift.pilotprotocol.network)
   COSIFT_EXTRA_HEADER   one extra header in "Name: value" form, sent on every

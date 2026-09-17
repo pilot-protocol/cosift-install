@@ -46,7 +46,7 @@ CASE_TABLE=(
   "C24|no-harness-detected-exits-3|root"
   "C25|preflight-missing-curl-exits-3|root"
   "C26|preflight-unwritable-home-exits-3|root"
-  "C27|default-endpoints-are-not-run-app|tester"
+  "C27|default-endpoints-use-production-cloud-run|tester"
   "C28|recovery-stale-token-falls-through|tester"
   "C29|token-never-leaks-outside-configs|tester"
   "C30|unparseable-claude-config-backed-up-before-cli|tester"
@@ -1626,11 +1626,14 @@ case_C27() { # no endpoint overrides at all: the shipped defaults must be sane
   OUT=$(env -u COSIFT_AUTH_BASE -u COSIFT_MCP_URL \
         timeout 90 sh "$INSTALL_SH" --dry-run --yes </dev/null 2>&1)
   RC=$?
-  chk_not_contains "--dry-run never shows a *.run.app URL" "$OUT" "run.app"
-  chk_contains "default MCP URL is the stable hostname" "$OUT" \
-    "cosift-mcp.pilotprotocol.network/v1/mcp"
+  chk_eq "default dry-run exit code" 0 "$RC"
+  chk_contains "default MCP URL is the production origin" "$OUT" \
+    "cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp"
   install_split --help
-  chk_not_contains "--help never shows a *.run.app URL" "$OUT" "run.app"
+  chk_contains "--help documents the production auth origin" "$OUT" \
+    "cosift-auth-udik5erlkq-uw.a.run.app"
+  chk_contains "--help documents the production MCP origin" "$OUT" \
+    "cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp"
   chk_eq "the mock saw no traffic (nothing was pointed at it)" 0 \
     "$(nreq '*' /auth/start)"
   mock_stop

@@ -62,7 +62,7 @@ so that removal is exact:
 ```toml
 # >>> cosift (managed by cosift-install — do not edit)
 [mcp_servers.cosift]
-url = "https://cosift-mcp.pilotprotocol.network/v1/mcp"
+url = "https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp"
 [mcp_servers.cosift.http_headers]
 Authorization = "Bearer ck_..."
 # <<< cosift
