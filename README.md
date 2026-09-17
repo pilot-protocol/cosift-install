@@ -22,6 +22,14 @@ on the machine), writes the server entry, and verifies that the entry actually w
 it reports success. It also sets up [onboarding](#onboarding-one-step), the one step that
 tells Cosift what you work on.
 
+If the signed Cosift CLI is already on your `PATH`, the installer also connects it
+to the same account. It saves a verified session in
+`${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json`, mode `0600`, without
+printing the token or asking you to copy it from a harness. `--no-cli` skips this;
+`--cli` makes a missing CLI or failed handoff an error. An existing session is
+never replaced. The web app at [cosift.pilotprotocol.network](https://cosift.pilotprotocol.network)
+uses the same account when you sign in with the same email.
+
 Every file it writes, every network call it makes and every line it adds to your Claude Code
 settings is enumerated in [docs/WHAT-HAPPENS.md](docs/WHAT-HAPPENS.md), step by step, for
 anyone who wants to audit it rather than trust a summary.
@@ -62,6 +70,7 @@ server accepts is reused.
 | the opencode config named above | the `cosift` entry, written by `opencode mcp add` — the script never edits this file when adding |
 | `<each edited file>.cosift-backup-<UTC timestamp>` | a copy of the file as it was before the edit |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what was installed, mode `0600` |
+| `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json` | verified CLI token, origin and expiry, mode `0600`, when a compatible CLI is available |
 | one file per selected harness, named under [onboarding](#onboarding-one-step) | the interview itself, mode `0644` — only if you agree to it |
 | `~/.local/bin/cosift-onboarding` | the local command the interview uses, mode `0755` — same condition |
 | `~/.claude/settings.json` | one `SessionStart` hook and five permission grants, so the interview can start and run without prompting you — same condition, Claude Code only |
@@ -83,8 +92,10 @@ refuses and exits `5` rather than overwriting it.
 
 ### Network
 
-The script contacts exactly two hosts: the Cosift auth service (`COSIFT_AUTH_BASE`) and the
-Cosift MCP endpoint (`COSIFT_MCP_URL`), both shown in `--help`. It sends your email address
+The script contacts the Cosift auth service (`COSIFT_AUTH_BASE`) and the
+Cosift MCP endpoint (`COSIFT_MCP_URL`), both shown in `--help`. When connecting an
+installed CLI, it also verifies the token at the web origin (`COSIFT_COMMUNITY_URL`).
+It sends your email address
 to the auth service in order to email you a code, and it sends the credential to the MCP
 endpoint to check that it works.
 
@@ -104,6 +115,7 @@ The files that hold it are:
 - Claude Code — `~/.claude.json`
 - Codex CLI — `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`)
 - opencode — `$XDG_CONFIG_HOME/opencode/opencode.json[c]`, else `~/.config/opencode/opencode.json[c]`
+- Cosift CLI, when connected — `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json`
 
 Consequences worth taking seriously:
 
@@ -117,6 +129,35 @@ Consequences worth taking seriously:
   to at most eight characters, like `ck_1_ABCD…`.
 
 If a token leaks, revoke it — see [Revoking a token](#revoking-a-token).
+
+## Use the web app and CLI together
+
+The installer configures agents; the [web app](https://cosift.pilotprotocol.network)
+provides Search, Answer, Research, saved requests, followed topics, contributions
+and credits. Sign in there with the email used during installation.
+
+Install the current signed binary for your platform from
+[Cosift releases](https://github.com/pilot-protocol/cosift/releases), verify its
+checksum and minisign signature using the release instructions, then rerun:
+
+```sh
+sh install.sh --cli
+cosift request -query 'Rust async runtimes'
+cosift contribute https://example.org/article
+cosift contribute -credits
+```
+
+The CLI discovers only the session file written by this installer and uses its
+recorded origin. Explicit credentials or `-session-file` take precedence;
+`-server` cannot send that session to another origin. `-guest` ignores it.
+The installer does not download or overwrite a binary. A missing or unsupported
+CLI leaves the agent install usable and prints the signed-release link.
+
+An existing CLI session is left unchanged, including with `--new-account`.
+To switch, run `cosift logout` first and rerun the installer. Logout revokes the
+shared token in any agent still using it as well. `--uninstall` removes agent
+integration but leaves this independently usable CLI session; use `cosift logout`
+to revoke and remove it.
 
 ## Onboarding: one step
 
@@ -257,6 +298,8 @@ install.sh [OPTIONS]
   --yes              accept all detected harnesses without prompting
   --onboarding       install the onboarding interview without asking
   --no-onboarding    do not install the onboarding interview
+  --cli              require connecting an already installed Cosift CLI
+  --no-cli           skip connecting an installed CLI
   --help             print usage to stdout and exit 0
   --version          print the version string to stdout and exit 0
 ```
@@ -296,7 +339,8 @@ warns and carries on, and nothing that was already written is rolled back.
 | --- | --- |
 | `COSIFT_AUTH_BASE` | override the auth service base URL used for the email code flow |
 | `COSIFT_MCP_URL` | override the MCP server URL that gets written into the harness config |
-| `COSIFT_EXTRA_HEADER` | one additional header in `Name: value` form, sent on every request the installer makes and written into the harness config next to `Authorization`; needed only when your Cosift deployment sits behind a gateway that requires a second header |
+| `COSIFT_COMMUNITY_URL` | web and CLI origin; defaults to `https://cosift.pilotprotocol.network` |
+| `COSIFT_EXTRA_HEADER` | one additional header in `Name: value` form, sent on every auth/MCP request and written into the harness config next to `Authorization`; it is not forwarded to the community CLI |
 | `COSIFT_CODEX_SKILLS_DIR` | the skills root the Codex onboarding file is written under; defaults to `~/.agents/skills`. It has no effect on the MCP config, and `CODEX_HOME` has no effect on it |
 
 Most people never set any of these. They exist so that a private or self-hosted Cosift

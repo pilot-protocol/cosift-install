@@ -48,8 +48,8 @@ contents on the site — one copy stays accurate, two do not.
 
 ## Two points worth keeping in any copy you write
 
-- The installer sends **no telemetry** and contacts only the two Cosift endpoints. This is a
-  genuine differentiator for a piped-to-shell installer and is safe to state plainly.
+- The installer sends **no telemetry**. It contacts Cosift auth and MCP, and the
+  web origin when it connects an already installed Cosift CLI.
 - After install, the credential is stored **in cleartext in the tool's own config file** —
   that is how MCP headers work everywhere. The README says so prominently. Don't write copy
   that implies the credential is stored more securely than that.
