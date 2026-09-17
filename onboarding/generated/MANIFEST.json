@@ -1,6 +1,6 @@
 {
   "artifact": "cosift-onboarding",
-  "body_sha256": "012ae626e4063f87a05838ec8a42cbe9f914b8788c5886df76a53eb58a16ad34",
+  "body_sha256": "c501b1b1bc044030dd3d087424eba357520646eeffaa6a39a7a8c58cc634f615",
   "body_source": "interview/BODY.md",
   "dir_mode": "0755",
   "file_mode": "0644",
@@ -14,7 +14,7 @@
         "name",
         "user-invocable"
       ],
-      "body_sha256": "012ae626e4063f87a05838ec8a42cbe9f914b8788c5886df76a53eb58a16ad34",
+      "body_sha256": "c501b1b1bc044030dd3d087424eba357520646eeffaa6a39a7a8c58cc634f615",
       "dir_mode": "0755",
       "file_mode": "0644",
       "frontmatter_keys": [
@@ -30,7 +30,7 @@
       "owned_dir": "$HOME/.claude/skills/cosift-onboarding",
       "prefix_bytes": 745,
       "prefix_sha256": "6a899f5c3a4dab97ac5e13d100e3f85f1260ebfadc088dd321258eb1488df769",
-      "sha256": "b02bba89d162ead332e003acf529e6579e958722d964be0281bb55cd16280b50",
+      "sha256": "538d3396d076ab7ed3bbd60a70515c7fe635d17d91db240458f0b53b0f09dd68",
       "shared_parent": "$HOME/.claude/skills",
       "verified": true
     },
@@ -39,7 +39,7 @@
         "description",
         "name"
       ],
-      "body_sha256": "012ae626e4063f87a05838ec8a42cbe9f914b8788c5886df76a53eb58a16ad34",
+      "body_sha256": "c501b1b1bc044030dd3d087424eba357520646eeffaa6a39a7a8c58cc634f615",
       "dir_mode": "0755",
       "file_mode": "0644",
       "frontmatter_keys": [
@@ -53,7 +53,7 @@
       "owned_dir": "$HOME/.agents/skills/cosift-onboarding",
       "prefix_bytes": 553,
       "prefix_sha256": "c15c08b8cdbf8f5a9bdb7e0b39e97425cc3c391d39e0bac9f83c702ed4756034",
-      "sha256": "f1f3c21dcfc3381fe1d58bce94bf9296c21fcfae85bc397cc497e9345dd03c94",
+      "sha256": "5165fbc92755b1d58c80e8f32eac88d28ad693a74b86d851769a2f1706b89142",
       "shared_parent": "$HOME/.agents/skills",
       "verified": false
     },
@@ -64,7 +64,7 @@
         "name",
         "version"
       ],
-      "body_sha256": "012ae626e4063f87a05838ec8a42cbe9f914b8788c5886df76a53eb58a16ad34",
+      "body_sha256": "c501b1b1bc044030dd3d087424eba357520646eeffaa6a39a7a8c58cc634f615",
       "dir_mode": "0755",
       "file_mode": "0644",
       "frontmatter_keys": [
@@ -80,7 +80,7 @@
       "owned_dir": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-onboarding",
       "prefix_bytes": 935,
       "prefix_sha256": "57f356609a592cebf8a5260b9d2c3368a1a6a706d4df3c51ee9d7266bc3788c1",
-      "sha256": "50554659497ecc8298be9928b0501eb397451020fe4a277c70ae68bbb01478ba",
+      "sha256": "aeb4eb11ebb41872b7d8bffbe2e7c74bc1c087ab64c270a74bd3ff546ab40c01",
       "shared_parent": "${HERMES_HOME:-$HOME/.hermes}/skills",
       "verified": false
     },
@@ -88,7 +88,7 @@
       "allowed_frontmatter_keys": [
         "description"
       ],
-      "body_sha256": "012ae626e4063f87a05838ec8a42cbe9f914b8788c5886df76a53eb58a16ad34",
+      "body_sha256": "c501b1b1bc044030dd3d087424eba357520646eeffaa6a39a7a8c58cc634f615",
       "dir_mode": "0755",
       "file_mode": "0644",
       "frontmatter_keys": [
@@ -101,7 +101,7 @@
       "owned_dir": null,
       "prefix_bytes": 529,
       "prefix_sha256": "e509a475df378ad4043ac2f07a1bb42a9a9f59ab24ce304d602dbe75630e084a",
-      "sha256": "01f87b7b9f1a12a101d9c1952e88d1324dbeec719c4fb3af2a99c9f52fff1757",
+      "sha256": "41c14266bbce9a981e1c7f819239e1fbd93cdd1f72c036832da8e9800e9731b7",
       "shared_parent": "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands",
       "verified": true
     }

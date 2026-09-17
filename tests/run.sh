@@ -75,6 +75,7 @@ CASE_TABLE=(
   "C53|digest-titles-only-and-read-only|tester"
   "C54|colour-only-on-a-terminal|tester"
   "C55|no-claude-no-settings-json|tester"
+  "C56|closing-launch-offer|tester"
 )
 
 # =====================================================================
@@ -752,14 +753,17 @@ install_pty() {
   fi
   local a
   for a in "$@"; do inner="$inner $(printf '%q' "$a")"; done
-  OUT=$(COSIFT_AUTH_BASE="$AUTH_BASE" COSIFT_MCP_URL="$MCP_URL" \
+  local envp=(COSIFT_AUTH_BASE="$AUTH_BASE" COSIFT_MCP_URL="$MCP_URL")
+  [ -n "${COSIFT_TEST_ALLOW_LAUNCH:-}" ] || envp+=(COSIFT_NO_LAUNCH=1)
+  OUT=$(env "${envp[@]}" \
         python3 "$PTY" "$lf" 1.1 "${PTY_TOTAL:-150}" bash -c "$inner" 2>&1)
   RC=$?
 }
 
 install_notty() {
-  OUT=$(COSIFT_AUTH_BASE="$AUTH_BASE" COSIFT_MCP_URL="$MCP_URL" \
-        timeout 90 sh "$INSTALL_SH" "$@" </dev/null 2>&1)
+  local envp=(COSIFT_AUTH_BASE="$AUTH_BASE" COSIFT_MCP_URL="$MCP_URL")
+  [ -n "${COSIFT_TEST_ALLOW_LAUNCH:-}" ] || envp+=(COSIFT_NO_LAUNCH=1)
+  OUT=$(env "${envp[@]}" timeout 90 sh "$INSTALL_SH" "$@" </dev/null 2>&1)
   RC=$?
 }
 
@@ -1023,7 +1027,8 @@ ESC=$(printf '\033')
 
 has_colour() { printf '%s' "$1" | grep -q "$ESC\["; }
 
-plain_text() { printf '%s\n' "$1" | LC_ALL=C sed -e "s/$ESC\[[0-9;?]*[A-Za-z]//g" -e 's/[[:space:]]*$//'; }
+plain_text() { printf '%s\n' "$1" | LC_ALL=C sed -e "s/$ESC\[[0-9;?]*[A-Za-z]//g" \
+    -e 's/\xe2\x9c\x93 *//g' -e 's/[[:space:]]*$//'; }
 
 DIGEST_OUT="" ; DIGEST_ERR="" ; DIGEST_RC=0
 
@@ -2765,6 +2770,71 @@ case_C55() { # a claude-less install writes nothing into ~/.claude/settings.json
   mock_stop
 }
 
+
+
+case_C56() { # the closing offer to open a harness, which the rest of the suite suppresses
+  mock_start ok || return 1
+  set_paths
+  # A stub on PATH ahead of the real CLI, so accepting the offer proves the exec happened
+  # without handing the case an interactive agent it can never exit.
+  mkdir -p "$HOME/stub"
+  local real_claude
+  real_claude=$(command -v claude)
+  cat >"$HOME/stub/claude" <<STUB
+#!/bin/sh
+# Everything the installer does goes to the real CLI; only the closing launch is caught.
+case "\$1" in
+"set up cosift")
+	printf 'STUB-CLAUDE-LAUNCHED argv=%s\n' "\$*"
+	exit 0
+	;;
+esac
+exec $real_claude "\$@"
+STUB
+  chmod 755 "$HOME/stub/claude"
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+
+  PTY_LINES="y
+$EMAIL
+123456
+y"
+  COSIFT_TEST_ALLOW_LAUNCH=1 PATH="$HOME/stub:$PATH" install_pty --harness=claude
+  chk_eq "accepting the offer exits 0" 0 "$RC"
+  chk_contains "the harness was actually opened" "$OUT" "STUB-CLAUDE-LAUNCHED"
+  chk_contains "it was opened with a prompt that starts setup" "$OUT" "set up cosift"
+  chk_contains "and it said so first" "$OUT" "Opening Claude Code"
+  assert_onboarding_installed claude
+  # exec replaces the installer, so nothing of ours may survive into that session.
+  chk_eq "no installer temp dir outlived the exec" "" \
+    "$(find /tmp -maxdepth 1 -name 'cosift-install.*' 2>/dev/null)"
+
+  install_notty --uninstall
+  PTY_LINES="y
+$EMAIL
+123456
+n"
+  COSIFT_TEST_ALLOW_LAUNCH=1 PATH="$HOME/stub:$PATH" install_pty --harness=claude
+  chk_eq "declining exits 0" 0 "$RC"
+  chk_not_contains "declining opens nothing" "$OUT" "STUB-CLAUDE-LAUNCHED"
+  chk_contains "declining still tells you how to start it" "$OUT" "/cosift-onboarding"
+
+  install_notty --uninstall
+  PTY_LINES="y
+$EMAIL
+123456"
+  COSIFT_TEST_ALLOW_LAUNCH=1 PATH="$HOME/stub:$PATH" install_pty --harness=claude --no-launch
+  chk_eq "--no-launch exit code" 0 "$RC"
+  chk_not_contains "--no-launch opens nothing" "$OUT" "STUB-CLAUDE-LAUNCHED"
+
+  # Accepting every default is not consent to have an application opened.
+  install_notty --uninstall
+  PTY_LINES="$EMAIL
+123456"
+  COSIFT_TEST_ALLOW_LAUNCH=1 PATH="$HOME/stub:$PATH" install_pty --yes
+  chk_eq "--yes exit code" 0 "$RC"
+  chk_not_contains "--yes opens nothing" "$OUT" "STUB-CLAUDE-LAUNCHED"
+  mock_stop
+}
 
 # =====================================================================
 # container entrypoint

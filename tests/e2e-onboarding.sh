@@ -105,6 +105,42 @@ command cp -f "$HOME/.claude/.credentials.json" "$SCRATCH/.claude/.credentials.j
   || printf '   no ~/.claude/.credentials.json to copy; export ANTHROPIC_API_KEY instead\n'
 chmod 600 "$SCRATCH/.claude/.credentials.json" 2>/dev/null || true
 
+# A scratch HOME is a brand-new machine to every tool that looks at it, and their first-run
+# wizards are not what we are here to test. Seed just enough that this looks like a machine
+# already in use: no zsh new-user menu, no Claude Code onboarding, theme picker, release
+# notes or per-directory trust dialog.
+: >"$SCRATCH/.zshrc"
+printf 'PS1="%%~ %% "\n' >>"$SCRATCH/.zshrc"
+CLAUDE_VERSION=$(claude --version 2>/dev/null | awk '{print $1}')
+python3 - "$SCRATCH" "${CLAUDE_VERSION:-2.1.273}" "$PWD" <<'PY'
+import json, os, sys
+scratch, version, cwd = sys.argv[1], sys.argv[2], sys.argv[3]
+src = os.path.expanduser('~/.claude.json')
+seed = {}
+try:
+    with open(src) as fh:
+        host = json.load(fh)
+    # Presentation state only. Never projects (paths, history), never credentials or
+    # anything under mcpServers - this file is the one the installer is about to edit.
+    for k in ('theme', 'hasCompletedOnboarding', 'lastOnboardingVersion',
+              'hasSeenAutoDefaultNotice', 'hasSeenTasksHint', 'hasSeenAutoModeOutsideReadPrompt',
+              'editorMode', 'autoUpdates', 'preferredNotifChannel'):
+        if k in host:
+            seed[k] = host[k]
+except Exception:
+    seed['theme'] = 'dark'
+    seed['hasCompletedOnboarding'] = True
+seed.setdefault('hasCompletedOnboarding', True)
+seed['lastReleaseNotesSeen'] = version
+seed['lastClawdEntranceVersion'] = version
+seed['numStartups'] = 50
+trusted = {'hasTrustDialogAccepted': True, 'hasClaudeMdExternalIncludesApproved': True}
+seed['projects'] = {cwd: dict(trusted), scratch: dict(trusted)}
+with open(os.path.join(scratch, '.claude.json'), 'w') as fh:
+    json.dump(seed, fh, indent=2)
+PY
+printf '   seeded a settled-looking environment (no zsh wizard, no Claude Code first run)\n'
+
 if [ -n "${COSIFT_E2E_TOKEN:-}" ]; then
   # install.sh's recovery path scans every harness config and validates the candidate
   # against the MCP endpoint, so seeding opencode lets a claude-only install skip the
@@ -200,30 +236,30 @@ fi
 step "over to you"
 cat <<EOF
 
-   Everything is installed in the scratch tree. Start Claude Code there and run the
-   interview yourself:
+   The installer offers to open Claude Code for you at the end. Say yes and the
+   interview runs straight away - that is the path to check, not the slash command.
 
-     env HOME=$SCRATCH PATH=$SCRATCH/.local/bin:\$PATH claude
+   If you declined, or want another go, open it yourself:
 
-   then type:
+     env HOME=$SCRATCH PATH=$SCRATCH/.local/bin:\$PATH claude "set up cosift"
 
-     /cosift-onboarding
+   And to prove the session-start hook on its own: open a plain \`claude\` in that
+   environment and type anything at all. The hook injects its directive at startup, but
+   an agent has no turn to act in until you send a message - so a blank prompt sits
+   there doing nothing, by design.
 
    What to watch for:
-     * it should run \`cosift-onboarding status\` and say so before doing it
-     * it must show the consent block IN FULL before any cosift_lookup, cosift_request
-       or cosift_topics call; only cosift_search may run before the gate
-     * answer as an ordinary new user and do not coach it
-     * at the end it offers \`cosift-onboarding complete\`; that writes state.json
+     * one message, one list, one question - not a series of questions
+     * every suggestion is a general subject. If you see a client, a repository or a
+       codename from your own work, that is a blocker and I want to know
+     * it should say in one line that it read a local summary that stays on this machine
+     * say yes once and it should submit and finish, with no further confirmations
 
-   Staging is shared and the demand ledger is global, so every topic you look up or
-   request is recorded with its literal text. Use topics you would be happy to see as a
-   public article title.
+   Staging is shared, so pick subjects you would be happy to see as a public article
+   title. The identity token expires in about an hour; if calls start failing, quit and
+   re-run this script rather than re-minting mid-interview.
 
-   The identity token expires in about an hour. If calls start failing, quit and re-run
-   this script rather than re-minting mid-interview.
-
-   Press Ctrl-D in that shell when you are done; this script then proves your host
+   Press Ctrl-D in the shell when you are done; this script then proves your host
    config is untouched.
 
 EOF

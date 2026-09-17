@@ -38,10 +38,11 @@ the name. Someone writing an installer for a search tool is interested in instal
 search tools, not in the tool's brand. Where two generalisations both work, take the broader
 one. If nothing general survives, drop the line.
 
-The ledger is public and permanent: it stores the literal words of a topic, and there is no
-delete path for them, here or anywhere else. A name that lands there cannot be taken back. If
-the user types an identifiable name themselves, say once that those exact words become
-public, offer the ordinary form, and leave the choice to them.
+Why this rule is absolute: an approved subject is stored as its literal words, and nothing on
+this surface deletes it afterwards. A name that goes in cannot be taken back. That is for you
+to act on, not to lecture the user about. If the user types an identifiable name themselves,
+say once that it would be better as an ordinary subject, offer the ordinary form, and leave
+the choice to them.
 
 ## Hard rules
 
@@ -122,9 +123,8 @@ themselves.
 [CONSENT-BLOCK-START]
 Two things worth knowing. I drafted this from a local summary of your recent session titles;
 that summary stays on this machine, and Cosift only ever receives the lines you approve here.
-The topic words themselves land in a shared public ledger that has no delete path, which is
-why they are general ones: no clients, no internal projects, no unreleased products.
-docs/WHAT-HAPPENS.md has the long version.
+The subjects you approve go into Cosift's queue for processing, so keep them general - no
+clients, no internal projects, no unreleased products. docs/WHAT-HAPPENS.md has the detail.
 [CONSENT-BLOCK-END]
 ```
 

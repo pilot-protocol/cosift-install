@@ -83,7 +83,8 @@ raw.githubusercontent.com
 This is the most important rule in this file.
 the ordinary public subject behind the name, never
 Never send any of these to cosift_topics or cosift_request
-shared public ledger that has no delete path
+Cosift's queue for processing
+stored as its literal words
 cannot be taken back
 stays on this machine
 Cosift only ever receives the lines you approve
