@@ -682,9 +682,7 @@ auth_start() {
 
 no_code_help() {
 	say ""
-	say "No code? Check the spam folder. The service does not confirm delivery, so an"
-	say "unknown or blocked address looks just like a delivered one from here, and it"
-	say "caps you at 3 codes per address per hour."
+	say "No code? Check the spam folder."
 	say "Empty answer shows this again; Ctrl-C stops."
 	say ""
 }
@@ -779,6 +777,7 @@ auth_verify_loop() {
 	rm -f "$_hf"
 	err "out of attempts. The server stops accepting codes for this request after"
 	err "$VERIFY_MAX_ATTEMPTS tries - re-run the installer to request a new one."
+	err "There is a cap of 3 codes per address per hour, so give it a moment."
 	return 1
 }
 
@@ -4157,37 +4156,29 @@ summary() {
 		printf '  %-16s %s%s%s\n' "$(harness_label "$_h")" \
 			"$CLR_DIM" "$(harness_config_path "$_h")" "$CLR_RESET"
 	done
+	# Short, but never silent: these files did not hold a credential before we ran.
+	say "  $(dim "Those files now hold your Cosift credential.")"
+	if [ -n "$TIGHTENED" ]; then
+		say "  $(dim "Tightened to 0600, having been readable by others:")"
+		printf '%s\n' "$TIGHTENED" | sed -e "s/^/    $CLR_DIM/" -e "s/\$/$CLR_RESET/"
+	fi
 	say ""
 	if [ -n "$ONBOARDED" ]; then
-		say "${CLR_HEAD}Setting it up${CLR_RESET} is one list to approve:"
 		for _h in $ONBOARDED; do
 			if [ "$_h" = claude ] && [ "$CLAUDE_HOOKED" -eq 1 ]; then
-				printf '  %-16s %s\n' "Claude Code" \
-					"starts on its own next time you open it"
+				say "Setup starts on its own next time you open $(harness_label "$_h")."
 			else
-				printf '  %-16s %s%s%s%s\n' "$(harness_label "$_h")" \
-					"type " "$CLR_ASK" "$(onboarding_invocation "$_h")" "$CLR_RESET"
+				say "To set up, type ${CLR_ASK}$(onboarding_invocation "$_h")${CLR_RESET} in $(harness_label "$_h")."
 			fi
 		done
 		if ! onboarding_on_path; then
-			say "  Put $(dim "$LOCAL_BIN") on your PATH first, or it cannot record that you are done:"
-			say "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+			say "Add $(dim "$LOCAL_BIN") to your PATH so it can record that you are done:"
+			say "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 		fi
-	else
-		say "The setup interview is not installed. Add it whenever you like:"
-		say "  install.sh --onboarding"
+		say ""
 	fi
-	say ""
-	say "${CLR_WARN}Those config files now hold a live credential${CLR_RESET} ($(token_display "$TOKEN")) - anyone"
-	say "who can read them can use your Cosift account."
-	if [ -n "$TIGHTENED" ]; then
-		say "These were readable by other users, so we set them to 0600:"
-		printf '%s\n' "$TIGHTENED" | sed -e 's/^/  /'
-	fi
-	say ""
-	say "Undo         install.sh --uninstall   (it does not revoke the credential;"
-	say "             do that in your Cosift account)"
-	say "Every step   ${CLR_DIM}$WHAT_HAPPENS_URL${CLR_RESET}"
+	say "Undo         install.sh --uninstall   $(dim "(revoke the credential in your account)")"
+	say "What it did  ${CLR_DIM}$WHAT_HAPPENS_URL${CLR_RESET}"
 }
 
 # Each opening prompt is the harness's own documented way in: claude takes a bare
