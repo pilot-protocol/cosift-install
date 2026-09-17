@@ -26,7 +26,9 @@ What it does:
 4. Removes `~/.local/bin/cosift-onboarding`, but only if that file is byte-identical to the one
    it installed. If it is not — an older release's copy, or one you edited — it says so and
    leaves the file; remove it by hand.
-5. Removes `state.json`, and `onboarding.json` beside it.
+5. Removes the entries it added to `~/.claude/settings.json`: the `SessionStart` hook and the
+   five permission grants. Nothing else in that file is touched.
+6. Removes `state.json`, and `onboarding.json` beside it.
 
 It does not trust the state file for step 3: it checks all three interview paths directly and
 removes whatever it recognises as ours. A file left behind by an earlier run is still found,
@@ -239,6 +241,66 @@ installed skills, so there is nothing else to ask.
 
 Restart any harness that was running while you deleted the file.
 
+### The Claude Code settings entries
+
+On Claude Code the installer also edited `~/.claude/settings.json`. Two things went in there,
+and this file has no marker comments, so remove them by name.
+
+**The hook**, which is what starts onboarding by itself. Under the top-level `"hooks"` key,
+inside `"SessionStart"`, delete the entry whose command ends in `cosift-onboarding hook`:
+
+```json
+"hooks": {
+  "SessionStart": [
+    {
+      "hooks": [
+        { "type": "command", "command": "/home/you/.local/bin/cosift-onboarding hook" }
+      ]
+    }
+  ]
+}
+```
+
+Delete that one object from the `"SessionStart"` array. If it was the only entry, you can leave
+`"SessionStart": []` or delete the `"SessionStart"` key; if `"hooks"` is then empty, that key
+can go too. Deleting only this is enough to stop the auto-start while leaving the interview
+available by typing `/cosift-onboarding`.
+
+**The five permission grants**, under `"permissions"` → `"allow"`. Delete exactly these
+strings, and nothing else in that array:
+
+```json
+"Bash(cosift-onboarding:*)"
+"mcp__cosift__cosift_search"
+"mcp__cosift__cosift_lookup"
+"mcp__cosift__cosift_request"
+"mcp__cosift__cosift_topics"
+```
+
+Removing them breaks nothing: Claude Code goes back to asking you before each of those calls.
+Mind the commas — `settings.json` is strict JSON, not JSONC, so a trailing or doubled comma
+makes the whole file unreadable to Claude Code.
+
+The four `mcp__cosift__*` strings are named after the MCP server, which this installer always
+calls `cosift`. If you renamed the server, your grants carry that other name instead.
+
+Verify by reading the file back:
+
+```sh
+grep -n "cosift" ~/.claude/settings.json      # should print nothing
+```
+
+If you installed with `--no-onboarding`, none of this was ever written and there is nothing
+here to remove. The same is true if the installer reported that it was leaving `settings.json`
+alone: it edits that file only with `python3` or `node`, and only when the file parses and its
+`hooks` and `permissions` sections are shaped the way it expects.
+
+`--uninstall` takes out the entry it wrote and nothing else. A `cosift-onboarding` hook that is
+*not* the one it wrote is named in a warning and left in place — that one is yours to remove,
+here.
+
+Restart Claude Code after editing the file.
+
 ### The local state file
 
 The interview records locally that you finished it, or that you declined, so that it does not
@@ -291,6 +353,7 @@ Find them:
 
 ```sh
 ls -la ~/.claude.json.cosift-backup-* \
+       ~/.claude/settings.json.cosift-backup-* \
        ~/.codex/config.toml.cosift-backup-* \
        ~/.config/opencode/opencode.json*.cosift-backup-* \
        ~/.claude/skills/cosift-onboarding/SKILL.md.cosift-backup-* \

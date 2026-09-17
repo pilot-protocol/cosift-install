@@ -10,6 +10,9 @@
     "description"
   ],
   "frontmatter": [
-    ["description", "Run the Cosift onboarding interview, when the user explicitly asks to set up or onboard Cosift. Turns interests the user states in the conversation into followed topics and at most three coverage requests. Never scans or reads the user's files to infer interests."]
+    [
+      "description",
+      "Run the Cosift onboarding interview: one message, one yes, done. Use when the user asks to set up, onboard or configure Cosift, or invokes this skill by name. Reads a local summary of recent session titles to suggest ordinary public subjects, then turns the approved ones into followed topics and at most three coverage requests. The summary never leaves the machine and only approved topics are sent."
+    ]
   ]
 }

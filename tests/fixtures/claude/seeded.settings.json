@@ -1,0 +1,46 @@
+{
+  "model": "opusplan",
+  "cleanupPeriodDays": 42,
+  "env": {
+    "KEEPME_ENV_VAR": "keepme-env-value"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "KEEPME-STATUSLINE --left"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Read(KEEPME-USER-PERMISSION)"
+    ],
+    "deny": [
+      "Read(KEEPME-USER-DENY)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf KEEPME-EXISTING-SESSIONSTART"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf KEEPME-POSTTOOLUSE",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

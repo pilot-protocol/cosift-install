@@ -14,7 +14,7 @@
   ],
   "frontmatter": [
     ["name", "cosift-onboarding"],
-    ["description", "Run the Cosift onboarding interview. Use only when the user explicitly asks to set up, onboard, or configure Cosift, or invokes this skill by name. Turns interests the user states in the conversation into followed topics and at most three coverage requests. Never scans or reads the user's files to infer interests."],
+    ["description", "Run the Cosift onboarding interview: one message, one yes, done. Use when the user asks to set up, onboard or configure Cosift, when they invoke this skill by name, or when a session-start hook reports that Cosift onboarding is outstanding. Reads a local summary of recent session titles to suggest ordinary public subjects, then turns the approved ones into followed topics and at most three coverage requests. The summary never leaves the machine and only approved topics are sent."],
     ["user-invocable", true],
     ["disallowed-tools", "Read, Glob, Grep, Write, Edit, NotebookEdit, WebFetch, WebSearch, Task"]
   ]

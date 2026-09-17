@@ -856,6 +856,248 @@ cmd_paths() {
 	exit 0
 }
 
+# ---------------------------------------------------------------- digest --
+
+# Session titles from the harnesses on this machine, for the interview to generalise
+# into public subjects. Local only: nothing here opens a socket, and the caller is
+# told to send abstractions rather than any of this text.
+py_digest() {
+	"$PY" - "$1" "$2" <<'PYEOF'
+import io, json, os, re, sqlite3, sys, time
+
+days, cap = int(sys.argv[1]), int(sys.argv[2])
+home = os.path.expanduser('~')
+cutoff = time.time() - days * 86400
+MIN_BEFORE_WIDENING = 15
+
+# A title is the only thing that leaves this function. Anything that looks like a
+# location on disk, an address or a URL is dropped rather than cleaned: the interview
+# wants the subject, and those carry client and project names.
+DROP = re.compile(r'(/|\\|~|\bhttps?://|\bwww\.|@[\w.-]+\.\w|\b[\w.-]+@)')
+TIDY = re.compile(r'\s+')
+# Placeholder titles the harnesses fall back to; they describe nothing.
+JUNK = frozenset(('chat session', 'new session', 'untitled', 'new chat', 'session'))
+
+
+def clean(title):
+    if not title:
+        return None
+    t = TIDY.sub(' ', str(title)).strip().strip('"\'')
+    if len(t) < 6 or len(t) > 120 or DROP.search(t) or t.lower() in JUNK:
+        return None
+    return t
+
+
+def claude(out):
+    root = os.path.join(home, '.claude', 'projects')
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            if not name.endswith('.jsonl'):
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            try:
+                with io.open(path, 'r', encoding='utf-8', errors='ignore') as fh:
+                    for line in fh:
+                        if '"ai-title"' not in line:
+                            continue
+                        try:
+                            d = json.loads(line)
+                        except ValueError:
+                            continue
+                        if d.get('type') == 'ai-title':
+                            out.append((mtime, clean(d.get('aiTitle') or d.get('title'))))
+                            break
+            except (IOError, OSError):
+                continue
+
+
+def opencode(out):
+    base = os.path.join(home, '.local', 'share', 'opencode')
+    db = os.path.join(base, 'opencode.db')
+    if os.path.exists(db):
+        # Read-only, and never the WAL writer: this is the user's live database.
+        for uri in ('file:%s?mode=ro' % db, 'file:%s?mode=ro&immutable=1' % db):
+            try:
+                con = sqlite3.connect(uri, uri=True)
+                rows = con.execute(
+                    'select title, time_created from session where title is not null'
+                ).fetchall()
+                con.close()
+                for title, created in rows:
+                    out.append(((created or 0) / 1000.0, clean(title)))
+                return
+            except sqlite3.Error:
+                continue
+    store = os.path.join(base, 'storage', 'session')
+    for dirpath, _dirs, files in os.walk(store):
+        for name in files:
+            if not name.endswith('.json'):
+                continue
+            try:
+                with io.open(os.path.join(dirpath, name), 'r', encoding='utf-8',
+                             errors='ignore') as fh:
+                    d = json.load(fh)
+            except (IOError, OSError, ValueError):
+                continue
+            t = (d.get('time') or {}).get('updated') or (d.get('time') or {}).get('created')
+            out.append(((t or 0) / 1000.0, clean(d.get('title'))))
+
+
+def codex(out):
+    # Unverified: no codex build was available to check either layout against. Both the
+    # legacy rollout files and a newer store are probed, and finding neither is fine.
+    base = os.environ.get('CODEX_HOME') or os.path.join(home, '.codex')
+    for sub in ('sessions', 'history', 'threads', 'rollouts'):
+        root = os.path.join(base, sub)
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _dirs, files in os.walk(root):
+            for name in files:
+                if not (name.endswith('.jsonl') or name.endswith('.json')):
+                    continue
+                path = os.path.join(dirpath, name)
+                try:
+                    mtime = os.path.getmtime(path)
+                except OSError:
+                    continue
+                found = None
+                try:
+                    with io.open(path, 'r', encoding='utf-8', errors='ignore') as fh:
+                        for n, line in enumerate(fh):
+                            if n > 200 or found:
+                                break
+                            try:
+                                d = json.loads(line)
+                            except ValueError:
+                                continue
+                            if not isinstance(d, dict):
+                                continue
+                            for key in ('title', 'aiTitle', 'summary', 'name'):
+                                v = d.get(key)
+                                if isinstance(v, str) and v.strip():
+                                    found = v.strip()[:160]
+                                    break
+                except (IOError, OSError):
+                    continue
+                out.append((mtime, clean(found)))
+
+
+rows = []
+for source in (claude, opencode, codex):
+    try:
+        source(rows)
+    except Exception:  # one unreadable harness must not lose the others
+        pass
+
+rows = [(t, s) for t, s in rows if s]
+rows.sort(key=lambda r: r[0], reverse=True)
+
+recent = [r for r in rows if r[0] >= cutoff]
+# A harness used rarely would otherwise produce nothing worth abstracting.
+if len(recent) < MIN_BEFORE_WIDENING:
+    recent = rows[:60]
+
+seen, lines = set(), []
+for _t, s in recent:
+    k = s.lower()
+    if k in seen:
+        continue
+    seen.add(k)
+    lines.append(s)
+    if len(lines) >= cap:
+        break
+
+sys.stdout.write('\n'.join(lines))
+if lines:
+    sys.stdout.write('\n')
+PYEOF
+}
+
+# Without python we can still read Claude Code's own session titles, but only from the
+# exact record that holds one: a transcript is full of unrelated "title" keys belonging
+# to tool calls, and matching those would emit arbitrary conversation text.
+awk_digest() {
+	_dd=$1
+	find "$HOME/.claude/projects" -name '*.jsonl' -mtime "-$_dd" 2>/dev/null |
+		while IFS= read -r _f; do
+			[ -n "$_f" ] || continue
+			grep -m1 '"type"[ ]*:[ ]*"ai-title"' "$_f" 2>/dev/null |
+				sed -n 's/.*"aiTitle"[ ]*:[ ]*"\([^"]*\)".*/\1/p'
+		done
+}
+
+cmd_digest() {
+	_days=30
+	_max=120
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--days)
+			_days=${2:-30}
+			shift 2 || shift
+			;;
+		--days=*) _days=${1#--days=}; shift ;;
+		--max)
+			_max=${2:-120}
+			shift 2 || shift
+			;;
+		--max=*) _max=${1#--max=}; shift ;;
+		-h | --help)
+			cat <<'EOF'
+Usage: cosift-onboarding digest [--days N] [--max N]
+
+Prints one recent session title per line, newest first, from the AI coding tools on
+this machine. Only the short title each tool generates for a session is used, never
+the text of what you typed, and a title holding a path, a URL or an address is
+dropped rather than cleaned. Nothing is sent anywhere and no file is written.
+
+Sources: Claude Code (~/.claude/projects), opencode (~/.local/share/opencode, opened
+read-only), and Codex (unverified, best effort). Finding nothing is not an error.
+EOF
+			return 0
+			;;
+		*)
+			warn "unknown option: $1"
+			return "$EX_USAGE"
+			;;
+		esac
+	done
+	case $_days in *[!0-9]*) _days=30 ;; esac
+	case $_max in *[!0-9]*) _max=120 ;; esac
+	if [ -n "$PY" ]; then
+		py_digest "$_days" "$_max" 2>/dev/null
+	else
+		awk_digest "$_days" | awk 'length($0) > 5 && length($0) < 160 &&
+			$0 !~ /[\/\\~]|https?:|www\.|@/ && !seen[tolower($0)]++' | head -n "$_max"
+	fi
+	return 0
+}
+
+# ------------------------------------------------------------------ hook --
+
+# Run by the harness at session start. Prints the directive only while onboarding is
+# still outstanding, and never fails: a broken state file must not break a session.
+cmd_hook() {
+	_word=$(cmd_status 2>/dev/null | head -1)
+	case $_word in
+	pending | unknown) ;;
+	*) return 0 ;;
+	esac
+	cat <<'EOF'
+Cosift is connected here but has not been set up yet.
+
+If the user has not asked for anything specific in this session, run the
+cosift-onboarding skill now, before saying anything else. If they have asked for
+something, do that first and then tell them in one line, at the end, that Cosift is
+not set up yet and you can do it whenever they like. Never do both in one turn, and
+never mention this again in a session where you have already raised it.
+EOF
+	return 0
+}
+
 # ------------------------------------------------------------------ main --
 
 main() {
@@ -874,7 +1116,7 @@ main() {
 		printf '%s %s\n' "$PROG" "$(version_string)"
 		exit 0
 		;;
-	status | complete | paths) : ;;
+	status | complete | paths | digest | hook) : ;;
 	*)
 		warn "unknown subcommand: $_cmd"
 		usage >&2
@@ -891,6 +1133,8 @@ main() {
 	status) cmd_status "$@" ;;
 	complete) cmd_complete "$@" ;;
 	paths) cmd_paths "$@" ;;
+	digest) cmd_digest "$@" ;;
+	hook) cmd_hook "$@" ;;
 	esac
 }
 

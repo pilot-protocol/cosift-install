@@ -1,0 +1,4 @@
+{"type":"user","sessionId":"ses-canary","message":{"role":"user","content":"CANARYPROMPT-9b41 untangle the quarterly payroll ledger for the Northwind account before the audit deadline, and keep the numbers between us"}}
+{"type":"assistant","sessionId":"ses-canary","message":{"role":"assistant","content":[{"type":"tool_use","name":"WebFetch","input":{"title":"TOOLTITLECANARY-2c77 internal wiki page"}}]}}
+{"type":"summary","summary":"SUMMARYCANARY-4d10 payroll numbers for the Northwind account"}
+{"aiTitle":"Payroll ledger reconciliation workflow","sessionId":"ses-canary","type":"ai-title"}

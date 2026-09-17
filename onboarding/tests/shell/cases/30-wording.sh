@@ -64,6 +64,29 @@ while IFS="$TAB" read -r kind item; do
     esac
 done <"$RULES"
 
+# A required string that contains a banned one makes the two lists unsatisfiable together.
+CONFLICTS="$ONB_TMP/wording-conflicts.txt"
+python3 - "$RULES" >"$CONFLICTS" <<'PY'
+import sys
+
+banned, required = [], []
+for line in open(sys.argv[1], encoding="utf-8").read().splitlines():
+    kind, _, item = line.partition("\t")
+    (banned if kind == "B" else required).append(item)
+
+for item in required:
+    for bad in banned:
+        if bad.lower() in item.lower():
+            print(f"required item {item!r} contains banned item {bad!r}")
+PY
+while IFS= read -r conflict; do
+    [ -n "$conflict" ] || continue
+    fail_note "WORDING.md contradicts itself: $conflict"
+done <"$CONFLICTS"
+if [ ! -s "$CONFLICTS" ]; then
+    pass_note "no REQUIRED item contains a BANNED item"
+fi
+
 if [ "$banned_seen" -eq 0 ]; then
     note "NOTE no BANNED items parsed from WORDING.md"
 fi

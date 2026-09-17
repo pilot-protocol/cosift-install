@@ -69,6 +69,12 @@ CASE_TABLE=(
   "C47|onboarding-state-command-status-and-complete|tester"
   "C48|onboarding-never-writes-through-a-link|tester"
   "C49|uninstall-finds-artifacts-state-forgot|tester"
+  "C50|claude-settings-merge-hook-and-permissions|tester"
+  "C51|unparseable-settings-json-refused|tester"
+  "C52|session-start-hook-command|tester"
+  "C53|digest-titles-only-and-read-only|tester"
+  "C54|colour-only-on-a-terminal|tester"
+  "C55|no-claude-no-settings-json|tester"
 )
 
 # =====================================================================
@@ -489,6 +495,111 @@ def jsonc_topkeys(path):
     return 0
 
 
+def _load(path):
+    if not os.path.exists(path):
+        print("NOFILE")
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except ValueError:
+        print("PARSE_ERROR")
+        return None
+    if not isinstance(doc, dict):
+        print("NOT_AN_OBJECT")
+        return None
+    return doc
+
+
+def _dig(doc, dotted):
+    cur = doc
+    for part in [p for p in dotted.split(".") if p]:
+        if not isinstance(cur, dict) or part not in cur:
+            return None, False
+        cur = cur[part]
+    return cur, True
+
+
+def json_path(path, dotted=""):
+    doc = _load(path)
+    if doc is None:
+        return 0
+    val, ok = _dig(doc, dotted)
+    print(json.dumps(val, sort_keys=True) if ok else "MISSING")
+    return 0
+
+
+def json_superset(path, dotted, want_path, want_dotted):
+    doc = _load(path)
+    want = _load(want_path)
+    if doc is None or want is None:
+        return 0
+    have = _dig(doc, dotted)[0]
+    need = _dig(want, want_dotted)[0]
+    have = [json.dumps(x, sort_keys=True) for x in (have if isinstance(have, list) else [])]
+    need = [json.dumps(x, sort_keys=True) for x in (need if isinstance(need, list) else [])]
+    missing = [x for x in need if x not in have]
+    print("SUPERSET" if not missing else "MISSING " + " | ".join(missing))
+    return 0
+
+
+def _walk_diff(a, b, path, out):
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            if k not in b:
+                out.append("extra %s.%s" % (path, k))
+            elif k not in a:
+                out.append("lost %s.%s" % (path, k))
+            else:
+                _walk_diff(a[k], b[k], "%s.%s" % (path, k), out)
+    elif isinstance(a, list) and isinstance(b, list):
+        for i in range(max(len(a), len(b))):
+            if i >= len(b):
+                out.append("extra %s[%d]=%s" % (path, i, json.dumps(a[i], sort_keys=True)))
+            elif i >= len(a):
+                out.append("lost %s[%d]=%s" % (path, i, json.dumps(b[i], sort_keys=True)))
+            else:
+                _walk_diff(a[i], b[i], "%s[%d]" % (path, i), out)
+    elif a != b:
+        out.append(
+            "%s: %s != %s" % (path, json.dumps(a, sort_keys=True), json.dumps(b, sort_keys=True))
+        )
+
+
+def json_eq(path_a, path_b):
+    a = _load(path_a)
+    b = _load(path_b)
+    if a is None or b is None:
+        return 0
+    out = []
+    _walk_diff(a, b, "", out)
+    print("SAME" if not out else "DIFF " + " ; ".join(out[:6]))
+    return 0
+
+
+def hook_cmds(path, event):
+    doc = _load(path)
+    if doc is None:
+        return 0
+    entries = (doc.get("hooks") or {}).get(event) or []
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        for h in entry.get("hooks") or []:
+            if isinstance(h, dict):
+                print(h.get("command", ""))
+    return 0
+
+
+def allow_list(path):
+    doc = _load(path)
+    if doc is None:
+        return 0
+    for e in (doc.get("permissions") or {}).get("allow") or []:
+        print(e if isinstance(e, str) else json.dumps(e, sort_keys=True))
+    return 0
+
+
 CMDS = {
     "manifest": manifest,
     "count-req": count_req,
@@ -505,6 +616,11 @@ CMDS = {
     "jsonc-names": jsonc_names,
     "jsonc-valid": jsonc_valid,
     "jsonc-topkeys": jsonc_topkeys,
+    "json-path": json_path,
+    "json-superset": json_superset,
+    "json-eq": json_eq,
+    "hook-cmds": hook_cmds,
+    "allow-list": allow_list,
 }
 
 if __name__ == "__main__":
@@ -665,6 +781,7 @@ fixture() { # fixture <relpath-under-fixtures> <dest>
   sed -e "s#__MCP_URL__#${MCP_URL}#g" \
       -e "s#__STALE_TOKEN__#${STALE_TOKEN}#g" \
       -e "s#__MINTED_TOKEN__#${MINTED_TOKEN}#g" \
+      -e "s#__NOW_MS__#$(date +%s)000#g" \
       "/work/tests/fixtures/$1" >"$2"
 }
 
@@ -884,6 +1001,96 @@ onb_is_stub() { # onb_is_stub <harness>
   local up
   up=$(printf '%s' "$1" | tr 'a-z' 'A-Z')
   grep -q "^${up}_PROVENANCE=stub$" /opt/cosift-test/harness-provenance.env 2>/dev/null
+}
+
+# ---------------------------------------------------------------------
+# claude settings.json, the digest, and colour
+# ---------------------------------------------------------------------
+
+claude_settings() { printf '%s\n' "$HOME/.claude/settings.json"; }
+
+settings_backups() {
+  find "$HOME/.claude" -maxdepth 1 -name 'settings.json.cosift-backup-*' 2>/dev/null | sort
+}
+
+hook_cmds() { python3 "$TH" hook-cmds "$(claude_settings)" SessionStart; }
+
+our_hook_cmd() { hook_cmds | grep 'cosift-onboarding' | head -1; }
+
+count_lines() { printf '%s\n' "$1" | grep -c . || true; }
+
+ESC=$(printf '\033')
+
+has_colour() { printf '%s' "$1" | grep -q "$ESC\["; }
+
+plain_text() { printf '%s\n' "$1" | LC_ALL=C sed -e "s/$ESC\[[0-9;?]*[A-Za-z]//g" -e 's/[[:space:]]*$//'; }
+
+DIGEST_OUT="" ; DIGEST_ERR="" ; DIGEST_RC=0
+
+digest_run() { # digest_run <home> [args ...]
+  local h=$1 e=/tmp/cosift-test/digest-err.txt
+  shift
+  DIGEST_OUT=$(env HOME="$h" CODEX_HOME="$h/.codex" XDG_CONFIG_HOME="$h/.config" \
+    timeout 60 sh "$ONB_CMD_SRC" digest "$@" 2>"$e")
+  DIGEST_RC=$?
+  DIGEST_ERR=$(cat "$e")
+}
+
+seed_digest_home() { # seed_digest_home <home>
+  local h=$1 now i d
+  now=$(date +%s)
+  mkdir -p "$h/.claude/projects/newest" \
+           "$h/.local/share/opencode/storage/session/default"
+  printf '{"aiTitle":"Zephyr search relevance tuning","sessionId":"s00","type":"ai-title"}\n' \
+    >"$h/.claude/projects/newest/s0.jsonl"
+  touch -d "@$((now - 60))" "$h/.claude/projects/newest/s0.jsonl"
+  i=1
+  while [ "$i" -le 16 ]; do
+    d="$h/.claude/projects/proj$i"
+    mkdir -p "$d"
+    printf '{"type":"user","message":{"role":"user","content":"unrelated turn"}}\n{"aiTitle":"Backlog grooming for service number %02d","sessionId":"s%02d","type":"ai-title"}\n' \
+      "$i" "$i" >"$d/s$i.jsonl"
+    touch -d "@$((now - 3600 - i * 600))" "$d/s$i.jsonl"
+    i=$((i + 1))
+  done
+  fixture digest/claude-canary.jsonl "$h/.claude/projects/canary/c.jsonl"
+  fixture digest/claude-path.jsonl "$h/.claude/projects/dirty/path.jsonl"
+  fixture digest/claude-url.jsonl "$h/.claude/projects/dirty/url.jsonl"
+  fixture digest/claude-email.jsonl "$h/.claude/projects/dirty/mail.jsonl"
+  touch -d "@$((now - 7200))" "$h/.claude/projects/canary/c.jsonl" \
+    "$h/.claude/projects/dirty/path.jsonl" "$h/.claude/projects/dirty/url.jsonl" \
+    "$h/.claude/projects/dirty/mail.jsonl"
+  fixture digest/claude-old.jsonl "$h/.claude/projects/old/old.jsonl"
+  touch -d "@$((now - 200 * 86400))" "$h/.claude/projects/old/old.jsonl"
+  fixture digest/opencode-legacy-session.json \
+    "$h/.local/share/opencode/storage/session/default/ses_legacy.json"
+}
+
+seed_opencode_db() { # seed_opencode_db <path>
+  python3 - "$1" <<'PYEOF'
+import os, sqlite3, sys, time
+
+path = sys.argv[1]
+os.makedirs(os.path.dirname(path), exist_ok=True)
+now = int(time.time() * 1000)
+rows = [
+    ("s1", "Sqlite index tuning for a catalogue", now - 86400000),
+    ("s2", "Bluesky firehose backpressure", now - 2 * 86400000),
+    ("s3", "Tidy up /var/tmp/OPENCODEDROPCANARY files", now - 3 * 86400000),
+    ("s4", None, now),
+]
+con = sqlite3.connect(path)
+con.execute(
+    "create table session (id text primary key, title text, "
+    "time_created integer, time_updated integer)"
+)
+con.executemany(
+    "insert into session (id, title, time_created, time_updated) values (?,?,?,?)",
+    [(i, t, c, c) for i, t, c in rows],
+)
+con.commit()
+con.close()
+PYEOF
 }
 
 # =====================================================================
@@ -1708,8 +1915,10 @@ $EMAIL
     [ "$(stat -c '%a' "$b" 2>/dev/null)" = "600" ] || bad="$bad$b "
   done <<<"$(backup_list)"
   chk_eq "every token-bearing backup is 0600" "" "$bad"
-  chk_matches "the summary says a file mode had to be tightened" "$OUT" \
-    "tighten|world-readable|group-readable|too permissive"
+  # Changing the mode of a user's file is disclosed, whatever words are used for it.
+  chk_matches "the summary discloses the mode change" "$OUT" \
+    "0600|tighten|readable by other|world-readable|group-readable|too permissive"
+  chk_contains "and names the file it changed" "$OUT" "$CODEX_CFG"
   mock_stop
 }
 
@@ -1845,6 +2054,7 @@ case_C41() {
     "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -40)"
   assert_onboarding_absent claude codex opencode
   chk_exists "no state command" "$(onb_cmd)" no
+  chk_exists "no settings.json" "$(claude_settings)" no
   chk_exists "no owned dir for claude" "$(onb_owned_dir claude)" no
   chk_exists "no owned dir for codex" "$(onb_owned_dir codex)" no
   chk_eq "no backups created" 0 "$(backup_list | wc -l)"
@@ -1873,6 +2083,8 @@ case_C42() {
   chk_exists "claude: the owned dir is gone" "$(onb_owned_dir claude)" no
   chk_exists "codex: the owned dir is gone" "$(onb_owned_dir codex)" no
   chk_exists "the state command is gone" "$(onb_cmd)" no
+  chk_eq "no cosift entry is left in settings.json" "" \
+    "$(grep -l cosift "$(claude_settings)" 2>/dev/null)"
   chk_exists "onboarding.json is gone" "$(onb_json)" no
   chk_exists "state.json is gone" "$(state_path)" no
   local h
@@ -1996,6 +2208,8 @@ case_C45() {
   assert_installed claude codex opencode
   assert_onboarding_absent claude codex opencode
   chk_exists "--no-onboarding wrote no state command" "$(onb_cmd)" no
+  chk_eq "--no-onboarding wrote no session-start hook" "" \
+    "$(grep -l 'cosift-onboarding' "$(claude_settings)" 2>/dev/null)"
   chk_eq "state records no onboarding harnesses" "[]" \
     "$(python3 "$TH" json-get "$(state_path)" onboarding_installed)"
 
@@ -2233,6 +2447,321 @@ case_C49() { # a later run must not strand interview files the state file has fo
   chk_exists "and the state command" "$(onb_cmd)" no
   chk_exists "the claude shared parent survives" "$HOME/.claude/skills" yes
   chk_exists "the codex shared parent survives" "$(onb_shared_parent codex)" yes
+  mock_stop
+}
+
+case_C50() { # the user's own settings.json survives the hook and the permission grants
+  mock_start ok || return 1
+  set_paths
+  local s seed seed_sha
+  s=$(claude_settings)
+  seed=/tmp/cosift-test/c50-seed.json
+  fixture claude/seeded.settings.json "$s"
+  cp "$s" "$seed"
+  seed_sha=$(sha_of "$s")
+
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes --harness=claude
+  chk_eq "install exit code" 0 "$RC"
+  assert_installed claude
+  assert_onboarding_installed claude
+
+  chk_eq "settings.json still parses" '"opusplan"' \
+    "$(python3 "$TH" json-path "$s" model)"
+  chk_eq "exactly one SessionStart hook is ours" 1 \
+    "$(hook_cmds | grep -c 'cosift-onboarding' || true)"
+  local ourcmd
+  ourcmd=$(our_hook_cmd)
+  chk_matches "our hook entry runs the hook subcommand" "$ourcmd" "cosift-onboarding.*hook"
+  chk_matches "the command in settings.json really runs and asks for the interview" \
+    "$(cd "$HOME" && sh -c "$ourcmd" 2>/dev/null)" "cosift-onboarding"
+
+  local added t
+  added=$(comm -13 <(python3 "$TH" allow-list "$seed" | sort) \
+                   <(python3 "$TH" allow-list "$s" | sort))
+  chk_eq "exactly five permissions were added" 5 "$(count_lines "$added")"
+  for t in cosift_search cosift_lookup cosift_request cosift_topics cosift-onboarding; do
+    chk_contains "the added permissions name $t" "$added" "$t"
+  done
+
+  local k
+  for k in model cleanupPeriodDays env statusLine permissions.deny \
+           permissions.defaultMode hooks.PostToolUse; do
+    chk_eq "pre-existing $k is unchanged" "$(python3 "$TH" json-path "$seed" "$k")" \
+      "$(python3 "$TH" json-path "$s" "$k")"
+  done
+  chk_eq "the user's own SessionStart hook survives verbatim" "SUPERSET" \
+    "$(python3 "$TH" json-superset "$s" hooks.SessionStart "$seed" hooks.SessionStart)"
+  chk_eq "the user's own permissions survive verbatim" "SUPERSET" \
+    "$(python3 "$TH" json-superset "$s" permissions.allow "$seed" permissions.allow)"
+  chk_contains "the status line command survives verbatim" "$(cat "$s")" "KEEPME-STATUSLINE"
+
+  chk_eq "exactly one backup of settings.json" 1 "$(settings_backups | wc -l)"
+  chk_eq "the backup holds the pre-install bytes" "$seed_sha" \
+    "$(sha_of "$(settings_backups | head -1)")"
+  backups_wellformed
+  chk "every backup name matches <path>.cosift-backup-<UTC>" $?
+
+  local after1 allow1
+  after1=$(sha_of "$s")
+  allow1=$(python3 "$TH" allow-list "$s" | wc -l)
+  PTY_LINES=""
+  install_notty --yes --harness=claude
+  chk_eq "second install exit code" 0 "$RC"
+  chk_eq "settings.json is byte-identical after the second install" "$after1" "$(sha_of "$s")"
+  chk_eq "still exactly one SessionStart hook of ours" 1 \
+    "$(hook_cmds | grep -c 'cosift-onboarding' || true)"
+  chk_eq "no permission was duplicated" "$allow1" "$(python3 "$TH" allow-list "$s" | wc -l)"
+  chk_eq "no second backup of settings.json" 1 "$(settings_backups | wc -l)"
+
+  install_notty --uninstall
+  chk_eq "uninstall exit code" 0 "$RC"
+  chk_exists "the user's settings.json is still there" "$s" yes
+  chk_eq "no hook of ours remains" 0 "$(hook_cmds | grep -c 'cosift' || true)"
+  chk_eq "no permission of ours remains" 0 \
+    "$(python3 "$TH" allow-list "$s" | grep -ci 'cosift' || true)"
+  chk_eq "what is left is exactly the settings the user started with" "SAME" \
+    "$(python3 "$TH" json-eq "$s" "$seed")"
+  mock_stop
+}
+
+case_C51() { # a settings.json that does not parse is refused, never rewritten
+  mock_start ok || return 1
+  set_paths
+  local s before
+  s=$(claude_settings)
+  fixture claude/unparseable.settings.json "$s"
+  before=$(sha_of "$s")
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes --harness=claude
+  chk_eq "the install still exits 0" 0 "$RC"
+  chk_eq "the settings file we refused is byte-identical" "$before" "$(sha_of "$s")"
+  chk_eq "it was not quarantined and reset" "PARSE_ERROR" \
+    "$(python3 "$TH" json-path "$s" model)"
+  chk_contains "the user's own keys are still in it" "$(cat "$s")" "KEEPME-BROKEN-SETTINGS"
+  chk_contains "the warning names the file" "$OUT" "settings.json"
+  chk_matches "the warning says it could not read it" "$OUT" \
+    "could not|cannot|unreadable|does not parse|not valid|malformed|left it|skipp"
+  assert_installed claude
+  assert_onboarding_installed claude
+  mock_stop
+}
+
+case_C52() { # the session-start directive, in every state the state file can be in
+  mock_start ok || return 1
+  set_paths
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes --harness=claude
+  chk_eq "install exit code" 0 "$RC"
+  assert_cmd_installed
+
+  local cmd state err out rc
+  cmd=$(onb_cmd)
+  state=$(state_path)
+  err=/tmp/cosift-test/c52-err.txt
+  cp "$state" /tmp/cosift-test/c52-fresh.json
+
+  out=$("$cmd" hook 2>"$err"); rc=$?
+  chk_eq "pending: exit code" 0 "$rc"
+  chk_contains "pending: names the interview to run" "$out" "cosift-onboarding"
+  chk_matches "pending: run it only when the user asked for nothing" "$out" \
+    "not asked|nothing specific|has not"
+  chk_matches "pending: otherwise do their work first and mention it once at the end" \
+    "$out" "first|at the end"
+  chk_eq "pending: stderr is silent" "" "$(cat "$err")"
+
+  "$cmd" complete >/dev/null 2>&1
+  out=$("$cmd" hook 2>"$err"); rc=$?
+  chk_eq "done: exit code" 0 "$rc"
+  chk_eq "done: prints nothing at all" "" "$out"
+  chk_eq "done: stderr is silent" "" "$(cat "$err")"
+
+  cp /tmp/cosift-test/c52-fresh.json "$state"
+  "$cmd" complete --declined >/dev/null 2>&1
+  out=$("$cmd" hook 2>"$err"); rc=$?
+  chk_eq "declined: exit code" 0 "$rc"
+  chk_eq "declined: prints nothing at all" "" "$out"
+  chk_eq "declined: stderr is silent" "" "$(cat "$err")"
+
+  rm -f "$state" "$(onb_json)"
+  out=$("$cmd" hook 2>"$err"); rc=$?
+  chk_eq "no state file: exit code" 0 "$rc"
+  chk_contains "no state file: still asks for the interview" "$out" "cosift-onboarding"
+  chk_eq "no state file: stderr is silent" "" "$(cat "$err")"
+
+  printf '{ "version": 1, "onboarded": false,\n' >"$state"
+  out=$("$cmd" hook 2>"$err"); rc=$?
+  chk_eq "corrupt state file: exit code is still 0" 0 "$rc"
+  chk_eq "corrupt state file: stderr is silent" "" "$(cat "$err")"
+  chk_not_contains "corrupt state file: no interpreter noise reaches the session" \
+    "$out$(cat "$err")" "Traceback"
+  mock_stop
+}
+
+case_C53() { # the digest offers subjects, never a path, an address or anything typed
+  local h=/home/tester/dhome db before after
+  rm -rf "$h"
+  seed_digest_home "$h"
+  db="$h/.local/share/opencode/opencode.db"
+  seed_opencode_db "$db"
+  local db_sha
+  db_sha=$(sha_of "$db")
+  before=$(python3 "$TH" manifest "$h")
+
+  digest_run "$h"
+  chk_eq "exit code" 0 "$DIGEST_RC"
+  chk_eq "stderr is silent" "" "$DIGEST_ERR"
+  chk_contains "a Claude Code title is offered" "$DIGEST_OUT" \
+    "Payroll ledger reconciliation workflow"
+  chk_contains "an opencode database title is offered" "$DIGEST_OUT" \
+    "Sqlite index tuning for a catalogue"
+  chk_eq "newest first" "Zephyr search relevance tuning" \
+    "$(printf '%s\n' "$DIGEST_OUT" | head -1)"
+  chk_eq "no blank lines between the titles" "" \
+    "$(printf '%s\n' "$DIGEST_OUT" | grep -n '^$' || true)"
+
+  chk_eq "no path or home reference anywhere in the output" "" \
+    "$(printf '%s\n' "$DIGEST_OUT" | grep -n '[/\\~]' || true)"
+  chk_eq "no URL anywhere in the output" "" \
+    "$(printf '%s\n' "$DIGEST_OUT" | grep -Ein 'https?:|www\.' || true)"
+  chk_eq "no e-mail address anywhere in the output" "" \
+    "$(printf '%s\n' "$DIGEST_OUT" | grep -n '@' || true)"
+  chk_not_contains "the path-bearing title was dropped whole, not cleaned" \
+    "$DIGEST_OUT" "northwind-curation"
+  chk_not_contains "the url-bearing title was dropped whole" "$DIGEST_OUT" \
+    "intranet.northwind"
+  chk_not_contains "the address-bearing title was dropped whole" "$DIGEST_OUT" "outage"
+  chk_not_contains "the opencode path-bearing title was dropped whole" "$DIGEST_OUT" \
+    "OPENCODEDROPCANARY"
+
+  chk_not_contains "what the user typed never appears" "$DIGEST_OUT" "CANARYPROMPT"
+  chk_not_contains "a tool call's own title is not a session title" "$DIGEST_OUT" \
+    "TOOLTITLECANARY"
+  chk_not_contains "a transcript summary is not a session title" "$DIGEST_OUT" \
+    "SUMMARYCANARY"
+
+  chk_not_contains "a 200-day-old session is outside the default window" "$DIGEST_OUT" \
+    "Kernel module debugging"
+  digest_run "$h" --days 3650
+  chk_eq "--days 3650 exit code" 0 "$DIGEST_RC"
+  chk_contains "--days widens the window" "$DIGEST_OUT" "Kernel module debugging"
+  digest_run "$h" --max 3
+  chk_eq "--max caps the list" 3 "$(count_lines "$DIGEST_OUT")"
+
+  chk_eq "the opencode database is byte-identical after the run" "$db_sha" "$(sha_of "$db")"
+  chk_eq "no journal or wal file was left beside it" "" \
+    "$(find "${db%/*}" -maxdepth 1 -name 'opencode.db-*' 2>/dev/null)"
+  after=$(python3 "$TH" manifest "$h")
+  chk_eq "the digest wrote nothing at all" "" \
+    "$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -20)"
+
+  rm -f "$db"
+  digest_run "$h"
+  chk_eq "legacy store: exit code" 0 "$DIGEST_RC"
+  chk_contains "a legacy opencode session file is read when there is no database" \
+    "$DIGEST_OUT" "Mastodon firehose ingestion backlog"
+
+  local sparse=/home/tester/dhome-sparse empty=/home/tester/dhome-empty
+  rm -rf "$sparse"
+  mkdir -p "$sparse/.claude/projects/old"
+  fixture digest/claude-old.jsonl "$sparse/.claude/projects/old/old.jsonl"
+  touch -d "@$(( $(date +%s) - 200 * 86400 ))" "$sparse/.claude/projects/old/old.jsonl"
+  digest_run "$sparse"
+  chk_eq "sparse home: exit code" 0 "$DIGEST_RC"
+  chk_contains "a sparse window widens instead of printing nothing" "$DIGEST_OUT" \
+    "Kernel module debugging"
+
+  rm -rf "$empty"
+  mkdir -p "$empty"
+  digest_run "$empty"
+  chk_eq "no history: exit code is still 0" 0 "$DIGEST_RC"
+  chk_eq "no history: prints nothing" "" "$DIGEST_OUT"
+  chk_eq "no history: stderr is silent" "" "$DIGEST_ERR"
+}
+
+case_C54() { # colour decorates a terminal and never reaches a pipe
+  mock_start ok || return 1
+  set_paths
+  seed_all_fixtures
+  cd "$HOME" || return 1
+  local colour nocolour dumb piped
+
+  export TERM=xterm-256color
+  PTY_LINES=""
+  install_pty --dry-run --yes
+  chk_eq "tty run exit code" 0 "$RC"
+  colour="$OUT"
+  chk "colour is used when stdout is a terminal" \
+    "$(has_colour "$colour" && echo 0 || echo 1)"
+
+  export NO_COLOR=1
+  install_pty --dry-run --yes
+  nocolour="$OUT"
+  unset NO_COLOR
+  chk_eq "NO_COLOR run exit code" 0 "$RC"
+  chk "NO_COLOR=1 turns colour off on a terminal" \
+    "$(has_colour "$nocolour" && echo 1 || echo 0)"
+
+  export TERM=dumb
+  install_pty --dry-run --yes
+  dumb="$OUT"
+  export TERM=xterm-256color
+  chk_eq "TERM=dumb run exit code" 0 "$RC"
+  chk "TERM=dumb turns colour off" "$(has_colour "$dumb" && echo 1 || echo 0)"
+
+  install_notty --dry-run --yes
+  piped="$OUT"
+  chk_eq "piped run exit code" 0 "$RC"
+  chk "a pipe never gets colour" "$(has_colour "$piped" && echo 1 || echo 0)"
+
+  chk_eq "NO_COLOR and TERM=dumb print the same text" \
+    "$(plain_text "$nocolour")" "$(plain_text "$dumb")"
+  chk_eq "the piped run prints the same text" \
+    "$(plain_text "$nocolour")" "$(plain_text "$piped")"
+  chk_eq "colour only decorates: the words are the same" \
+    "$(plain_text "$nocolour")" "$(plain_text "$colour")"
+
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes
+  chk_eq "install exit code" 0 "$RC"
+  local lc w
+  lc=$(printf '%s%s' "$OUT" "$piped" | tr 'A-Z' 'a-z')
+  for w in retry_after_days covers_well quota_exceeded roadmap; do
+    chk_not_contains "nothing the user reads mentions $w" "$lc" "$w"
+  done
+  mock_stop
+}
+
+case_C55() { # a claude-less install writes nothing into ~/.claude/settings.json
+  mock_start ok || return 1
+  set_paths
+  local s before
+  s=$(claude_settings)
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --yes --harness=codex,opencode
+  chk_eq "install exit code" 0 "$RC"
+  assert_installed codex opencode
+  assert_onboarding_installed codex opencode
+  assert_onboarding_absent claude
+  chk_exists "no settings.json was created for a claude-less install" "$s" no
+
+  fixture claude/seeded.settings.json "$s"
+  before=$(sha_of "$s")
+  PTY_LINES=""
+  install_notty --yes --harness=codex,opencode
+  chk_eq "second install exit code" 0 "$RC"
+  chk_eq "a pre-existing settings.json is byte-identical" "$before" "$(sha_of "$s")"
+  chk_eq "no backup of settings.json was taken" 0 "$(settings_backups | wc -l)"
+  chk_eq "no hook was added" 0 "$(hook_cmds | grep -c 'cosift' || true)"
   mock_stop
 }
 

@@ -1,0 +1,6 @@
+{
+  "id": "ses_legacy",
+  "title": "Mastodon firehose ingestion backlog",
+  "version": "0.4.2",
+  "time": { "created": __NOW_MS__, "updated": __NOW_MS__ }
+}

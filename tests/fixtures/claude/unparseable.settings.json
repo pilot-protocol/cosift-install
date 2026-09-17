@@ -1,0 +1,8 @@
+{
+  "model": "opusplan",
+  "KEEPME-BROKEN-SETTINGS": true,
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "printf KEEPME-EXISTING-SESSIONSTART" } ] }
+    ]
+  },

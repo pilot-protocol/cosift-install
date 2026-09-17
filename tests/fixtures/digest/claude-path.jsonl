@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"ses-path","message":{"role":"user","content":"unrelated turn"}}
+{"aiTitle":"Refactor the tools/northwind-curation scripts","sessionId":"ses-path","type":"ai-title"}

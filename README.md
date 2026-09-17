@@ -19,8 +19,12 @@ curl -fsSL https://raw.githubusercontent.com/pilot-protocol/cosift-install/v1/in
 It detects which supported harnesses are present, asks which of them to configure, gets you
 a credential (by emailing you a six-digit code, unless a usable Cosift credential is already
 on the machine), writes the server entry, and verifies that the entry actually works before
-it reports success. If you agree to it, it also installs a short [onboarding
-interview](#the-onboarding-interview) that your agent can run.
+it reports success. It also sets up [onboarding](#onboarding-one-step), the one step that
+tells Cosift what you work on.
+
+Every file it writes, every network call it makes and every line it adds to your Claude Code
+settings is enumerated in [docs/WHAT-HAPPENS.md](docs/WHAT-HAPPENS.md), step by step, for
+anyone who wants to audit it rather than trust a summary.
 
 Supported harnesses: **Claude Code**, **Codex CLI**, **opencode**.
 
@@ -40,7 +44,8 @@ directory.
 | `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) | same |
 | `$XDG_CONFIG_HOME/opencode/opencode.json` or `.jsonc`, falling back to `~/.config/opencode/opencode.json` or `.jsonc` (on macOS too — opencode uses `~/.config`, not `~/Library`) | same |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what a previous run configured |
-| the onboarding interview paths listed [below](#what-it-installs) | whether a file is already sitting there, and whether it is byte-identical to ours |
+| the onboarding paths listed [below](#what-it-writes) | whether a file is already sitting there, and whether it is byte-identical to ours |
+| `~/.claude/settings.json` | whether our hook and permissions are already in it |
 
 It also looks for `claude`, `codex` and `opencode` on your `PATH`.
 
@@ -57,8 +62,9 @@ server accepts is reused.
 | the opencode config named above | the `cosift` entry, written by `opencode mcp add` — the script never edits this file when adding |
 | `<each edited file>.cosift-backup-<UTC timestamp>` | a copy of the file as it was before the edit |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what was installed, mode `0600` |
-| one file per selected harness, named under [the onboarding interview](#the-onboarding-interview) | the interview itself, mode `0644` — only if you agree to it |
+| one file per selected harness, named under [onboarding](#onboarding-one-step) | the interview itself, mode `0644` — only if you agree to it |
 | `~/.local/bin/cosift-onboarding` | the local command the interview uses, mode `0755` — same condition |
+| `~/.claude/settings.json` | one `SessionStart` hook and five permission grants, so the interview can start and run without prompting you — same condition, Claude Code only |
 | a temporary directory under `$TMPDIR` | request bodies and header files, deleted on exit |
 
 Every file the script edits is copied to `<path>.cosift-backup-YYYYmmddTHHMMSSZ` **before**
@@ -112,91 +118,106 @@ Consequences worth taking seriously:
 
 If a token leaks, revoke it — see [Revoking a token](#revoking-a-token).
 
-## The onboarding interview
+## Onboarding: one step
 
-The installer can also install a short interview that your agent runs when you ask it to. The
-interview asks two to four questions about what you work on and turns your answers into two
-things: **topics your account follows**, and **at most three coverage requests**. A request
-records demand for an article. It is not a promise that one gets written.
+Install it, open your agent, approve one list. That is the whole thing.
 
-It is installed only if you agree to it. With no flag and a terminal available, the installer
-lists the exact files it would write and asks once, `[Y/n]`, after you have chosen your
-harnesses; bare Enter means yes. Answer `n` and nothing is written. With no terminal available
-— some CI runners, some container invocations — it is skipped without a prompt, and the
-installer prints one line telling you that `--onboarding` adds it later. Pass `--no-onboarding`
-to decline up front. `--yes` implies `--onboarding`.
+On Claude Code the interview starts by itself the first time you open a session after
+installing. If you opened that session to get something done, the agent does your work and
+mentions Cosift in one line at the end instead — never both in the same turn.
 
-Agreeing to install it is not agreeing to run it. Inside the interview your agent asks again,
-with a disclosure, before anything is recorded with Cosift.
+It reads a local digest of the titles your AI tools generated for your own recent sessions,
+turns each one into an ordinary public subject, and shows you one short list. Edit any line,
+cut any line, add your own, then say yes once. The broad subjects you approve become the topics
+your Cosift account follows; the few specific ones worth a written piece are recorded as demand
+for one. A recorded request is demand, not a promise that an article gets written.
 
-### What it installs
+What each harness can actually do differs:
 
-One file per harness you selected:
+| | Claude Code | opencode | Codex |
+| --- | --- | --- | --- |
+| starts by itself | yes, via a `SessionStart` hook | no — type `/cosift-onboarding` | no — type `$cosift-onboarding` |
+| suggests from your history | yes | yes | best effort, **unverified** |
+
+Codex plugins install from a marketplace and opencode plugins are npm modules, so neither can
+start anything on its own. There is no Codex binary on our development host, so everything
+claimed for Codex is untested rather than known.
+
+Nothing on Cosift's side offers you the interview: the trigger is a hook on your machine
+reading a file on your machine, and the server is never told whether you have onboarded. Why it
+works that way: [onboarding/docs/server-pointer-seam.md](onboarding/docs/server-pointer-seam.md).
+
+### What it writes
 
 | Harness | File |
 | --- | --- |
 | Claude Code | `~/.claude/skills/cosift-onboarding/SKILL.md` |
 | Codex CLI | `${COSIFT_CODEX_SKILLS_DIR:-~/.agents/skills}/cosift-onboarding/SKILL.md` |
 | opencode | `${XDG_CONFIG_HOME:-~/.config}/opencode/commands/cosift-onboarding.md` |
+| all three | `~/.local/bin/cosift-onboarding`, mode `0755` |
 
 Codex reads skills from `~/.agents/skills`, which is **not** under `$CODEX_HOME`; setting
-`CODEX_HOME` does not move it. `COSIFT_CODEX_SKILLS_DIR` does.
+`CODEX_HOME` does not move it, `COSIFT_CODEX_SKILLS_DIR` does.
 
-Plus one command, `~/.local/bin/cosift-onboarding`, mode `0755`.
+**None of these files holds a credential**, unlike the harness configs above. They are mode
+`0644` static text: no timer, no background process, nothing fetched while they run. A symlink
+at one of those paths is refused and left alone; anything else already there is backed up first.
 
-**None of these files holds a credential.** Unlike the harness configs above, there is no token
-in them and nothing in them is secret — they are mode `0644`, and the installer leaves them
-that way on purpose. Directories it creates for them are `0755`: the `cosift-onboarding`
-directory, the skills or commands directory above it, and `~/.local/bin`. Anything further up
-that it has to create (`~/.claude`, `~/.agents`, `~/.config/opencode`, `~/.local`) comes out
-`0700`. They are static text generated at release time: no timer, no background process,
-nothing fetched while they run.
+### The change to `~/.claude/settings.json`
 
-If one of those paths already has something in it:
+On Claude Code, and only there, the installer also edits your user settings file. Plainly, it
+adds:
 
-- byte-identical to what we would write — nothing happens, and the installer says "already up
-  to date";
-- an interview of ours from an earlier release — it is replaced in place, with no backup;
-- a symlink — it is refused and left alone, and so is whatever it points at;
-- anything else — it is copied to `<path>.cosift-backup-<UTC timestamp>` first, then replaced,
-  and the installer tells you it did that.
+- one `SessionStart` hook, `cosift-onboarding hook`, which is what makes the interview start by
+  itself. It prints a short directive while onboarding is outstanding, prints nothing once you
+  have finished or declined, and always exits `0`;
+- five entries in `permissions.allow` — `Bash(cosift-onboarding:*)` for the local command, and
+  `mcp__cosift__cosift_search`, `mcp__cosift__cosift_lookup`, `mcp__cosift__cosift_request` and
+  `mcp__cosift__cosift_topics` for the four Cosift tools. Without them the agent stops to ask
+  you to approve each call it makes during the interview.
 
-If any part of this fails you get a warning, not a failed install. By that point the MCP server
-is registered and verified, and a missing interview is not a reason to undo that.
+Both are appended: the installer adds its own entry and leaves every other key in that file as
+it was, after copying the file to `<path>.cosift-backup-<UTC timestamp>`. It needs `python3` or
+`node` to do that safely and says so if it finds neither, in which case the file is untouched
+and you start the interview by typing its name.
 
-### How to run it
+To turn auto-start off and keep everything else, delete the `SessionStart` entry whose command
+ends in `cosift-onboarding hook` from `~/.claude/settings.json`; the interview is then still
+there when you type `/cosift-onboarding`. Removing the five grants just puts the per-call
+prompts back. `install.sh --uninstall` removes both.
 
-| Harness | Type |
-| --- | --- |
-| Claude Code | `/cosift-onboarding` |
-| opencode | `/cosift-onboarding` |
-| Codex CLI | `$cosift-onboarding` |
+### The digest
 
-You type it, and that is the only way it starts. No Cosift tool call and no Cosift tool
-response points you at the interview, and that is deliberate rather than an omission — the
-reasoning is in [onboarding/docs/server-pointer-seam.md](onboarding/docs/server-pointer-seam.md).
-If the harness was already running when you installed, restart it before looking for the
-command.
+```sh
+cosift-onboarding digest
+```
 
-`~/.local/bin/cosift-onboarding` is the local half. The interview runs it to check whether you
-have done this already, and at the end it can record that you finished — or that you declined —
-in `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json`, or in `onboarding.json` beside it when
-there is no `state.json`. It reads and writes that one file, makes no network call, and sends
-nothing anywhere. If `~/.local/bin` is not on your `PATH` the interview still runs; it just
-cannot read or record that flag. The installer's final summary warns you when `~/.local/bin` is
-not on your `PATH`.
+Run it yourself and you see exactly what the agent saw: one session title per line, newest
+first, from Claude Code, opencode and (best effort) Codex. It reads **only** the short title
+each tool generated for a session — never the text of what you typed — and drops any title
+holding a path, a URL or an email address rather than cleaning it. It opens no socket and
+writes no file.
 
-What the interview sends to Cosift is the strings you approved and nothing else — no file
-contents, no file names. It does not read, list or search your files. The topic text you look
-up or request is written into Cosift's shared demand ledger, which is not linked to your
-account but is not private either, so keep client and project names out of it.
-[onboarding/docs/ONBOARDING.md](onboarding/docs/ONBOARDING.md) is the full account of what the
-interview does, what leaves your machine, and how to decline it once it is running.
+The list the agent proposes is deliberately one step removed from those titles: the subject,
+never the client, product, repository or codename. Topic words go into a shared public ledger
+that has no delete path, so keep private names out of them — the agent shows you every exact
+string before it sends anything.
 
-### Removing it
+### Saying no, and removing it
 
-`install.sh --uninstall` removes the interview together with the server entries. To do it by
-hand, see [docs/UNINSTALL.md](docs/UNINSTALL.md#removing-the-onboarding-interview).
+`--no-onboarding` declines everything above, including the settings change. `--onboarding`
+installs it without asking, and `--yes` implies it. With neither flag and a terminal available,
+the installer names every path first and asks once, `[Y/n]`, after you have chosen your
+harnesses; bare Enter means yes. With no terminal (some CI runners, some containers) it is
+skipped without a prompt.
+
+One word ends the interview while it is running, and nothing reaches Cosift; the agent records
+the decline locally so it does not come up again. `install.sh --uninstall` removes the files,
+the settings entries and the server entries together — by hand, see
+[docs/UNINSTALL.md](docs/UNINSTALL.md#removing-the-onboarding-interview).
+
+The full account — every file, every tool call, what becomes public, how to undo it — is
+[docs/WHAT-HAPPENS.md](docs/WHAT-HAPPENS.md).
 
 ## Don't want to pipe to sh?
 
@@ -252,8 +273,8 @@ writes nothing at all — no backups, no state directory, no temp files in your 
 — and it never runs the email flow. It may use a credential already on the machine to perform
 one read-only check against the MCP endpoint, but it will not mint a new one.
 
-`--uninstall` removes the onboarding interview as well as the server entries. It is documented
-in [docs/UNINSTALL.md](docs/UNINSTALL.md).
+`--uninstall` removes the onboarding files and the `settings.json` entries as well as the
+server entries. It is documented in [docs/UNINSTALL.md](docs/UNINSTALL.md).
 
 ## Exit codes
 
@@ -266,7 +287,7 @@ in [docs/UNINSTALL.md](docs/UNINSTALL.md).
 | `5` | harness write failure — a config was refused, a write failed, or the post-write re-read did not find our entry |
 | `6` | interaction was required but `/dev/tty` could not be opened for reading |
 
-The onboarding interview never changes the exit code. If it cannot be installed the installer
+Onboarding never changes the exit code. If any part of it cannot be installed the installer
 warns and carries on, and nothing that was already written is rolled back.
 
 ## Environment overrides
@@ -393,9 +414,10 @@ Full details, including manual removal for each harness: [docs/UNINSTALL.md](doc
 
 ## Also in this repository
 
+- [docs/WHAT-HAPPENS.md](docs/WHAT-HAPPENS.md) — the audit document: every file written, every network call, the `settings.json` change, what the digest reads, what becomes public, and how to undo all of it.
 - [docs/UNINSTALL.md](docs/UNINSTALL.md) — automatic and manual removal, and how to restore a backup.
 - [docs/HARNESSES.md](docs/HARNESSES.md) — the per-harness adapter reference: config paths, formats, and exact commands.
-- [onboarding/docs/ONBOARDING.md](onboarding/docs/ONBOARDING.md) — the onboarding interview: what it asks, what it sends, what becomes public.
+- [onboarding/docs/ONBOARDING.md](onboarding/docs/ONBOARDING.md) — onboarding from the user's side: how the one step runs, what it sends, what becomes public.
 - [onboarding/docs/HARNESS-NOTES.md](onboarding/docs/HARNESS-NOTES.md) — where the interview file goes per harness, and what was and was not verified against a real one. It also covers a Hermes profile; `install.sh` does not configure Hermes.
 - [onboarding/docs/server-pointer-seam.md](onboarding/docs/server-pointer-seam.md) — why nothing on the server side points at the interview.
 - [onboarding/](onboarding/) — the source the interview is generated from. The installer carries the generated text inside itself and fetches nothing.
