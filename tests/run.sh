@@ -77,6 +77,7 @@ CASE_TABLE=(
   "C55|no-claude-no-settings-json|tester"
   "C56|closing-launch-offer|tester"
   "C57|claude-reset-guard-discriminates|tester"
+  "C58|new-account-never-reuses-a-credential|tester"
 )
 
 # =====================================================================
@@ -2887,6 +2888,48 @@ mkdir -p "$HOME/.claude/backups"
 claude_reset_check /tmp/backup 2>&1'); rc=$?
   chk "a .corrupted. quarantine file is caught" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
   chk_contains "and it is reported" "$out" "replaced"
+}
+
+case_C58() { # --new-account must ignore a credential the machine already has
+  mock_start ok || return 1
+  set_paths
+  # A usable token in a harness config, of the kind recovery is built to find - including
+  # one under a server name that is not ours.
+  mkdir -p "$HOME/.config/opencode"
+  cat >"$HOME/.config/opencode/opencode.json" <<JSON
+{ "mcp": { "someone-elses-staging": { "type": "remote", "url": "$MCP_URL",
+  "headers": { "Authorization": "Bearer $MINTED_TOKEN" } } } }
+JSON
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+
+  # Without the flag, that token is reused and no code is ever requested.
+  install_notty --harness=claude --yes
+  chk_eq "plain run exit code" 0 "$RC"
+  chk_eq "plain run reused the credential, so no code was requested" 0 "$(nreq POST /auth/start)"
+
+  install_notty --uninstall
+  mock_stop
+  mock_start ok || return 1
+
+  # With it, the email flow runs even though a perfectly good token is sitting there.
+  PTY_LINES="y
+$EMAIL
+123456"
+  install_pty --harness=claude --new-account
+  chk_eq "--new-account exit code" 0 "$RC"
+  chk_eq "--new-account requested a code" 1 "$(nreq POST /auth/start)"
+  chk_contains "and said it was leaving the existing one alone" "$OUT" "left alone"
+  chk_not_contains "it never reported reusing a credential" "$OUT" "Reusing"
+
+  # The credential it ignored is still exactly where it was.
+  chk_contains "the other tool's credential is untouched" \
+    "$(cat "$HOME/.config/opencode/opencode.json")" "$MINTED_TOKEN"
+
+  # --dry-run reports the same intent rather than probing for a token.
+  install_notty --dry-run --yes --new-account
+  chk_contains "dry-run says a new account" "$OUT" "a new account"
+  chk_not_contains "dry-run does not offer to reuse" "$OUT" "would be reused"
+  mock_stop
 }
 # =====================================================================
 # container entrypoint

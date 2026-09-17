@@ -101,6 +101,7 @@ CR=$(printf '\r')
 OPT_DRY_RUN=0
 OPT_UNINSTALL=0
 OPT_YES=0
+OPT_NEW_ACCOUNT=0
 OPT_HARNESS=""
 # "" = ask, 1 = install the interview, 0 = skip it.
 OPT_ONBOARDING=""
@@ -3874,6 +3875,8 @@ OPTIONS
   --onboarding       install the onboarding interview too, without asking
   --no-onboarding    do not install the onboarding interview
   --no-launch        do not offer to open a harness when the install is done
+  --new-account      always sign up by email; never reuse a credential that is
+                     already on this machine
   --help             show this help and exit
   --version          print the version and exit
 
@@ -4061,6 +4064,15 @@ select_harnesses() {
 }
 
 obtain_token() {
+	if [ "$OPT_NEW_ACCOUNT" -eq 1 ]; then
+		say ""
+		say "Signing up for a new account; any credential already on this machine is"
+		say "left alone and not reused."
+		if ! email_flow; then
+			exit "$EX_AUTH"
+		fi
+		return 0
+	fi
 	step "Looking for a Cosift credential you already have"
 	if try_recover_token; then return 0; fi
 	if ! email_flow; then
@@ -4289,7 +4301,10 @@ onboarding_dry_run() {
 dry_run() {
 	step "Dry run - nothing will be written"
 	say ""
-	if try_recover_token; then
+	if [ "$OPT_NEW_ACCOUNT" -eq 1 ]; then
+		say "Token source: a new account. Any credential already on this machine is left"
+		say "              alone, and you would be asked for your email and a 6-digit code."
+	elif try_recover_token; then
 		say "Token source: an existing credential on this machine would be reused."
 		say "              No email verification would be needed."
 	else
@@ -4516,6 +4531,7 @@ parse_args() {
 		--onboarding) _want_onb=1 ;;
 		--no-onboarding) _skip_onb=1 ;;
 		--no-launch) OPT_LAUNCH=0 ;;
+		--new-account) OPT_NEW_ACCOUNT=1 ;;
 		--harness=*)
 			OPT_HARNESS=${1#--harness=}
 			if [ -z "$OPT_HARNESS" ]; then
