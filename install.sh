@@ -882,14 +882,27 @@ claude_user_servers() {
 
 # Claude Code answers a config it cannot parse by moving it aside and writing a fresh
 # minimal one; the tell is that keys the user had are simply gone.
+# Files Claude Code sets aside when it cannot parse this config. A routine migration
+# writes .claude.json.backup.<ts> instead, which is not our business.
+claude_quarantine_list() {
+	find "$HOME/.claude/backups" -maxdepth 1 -name '*.corrupted.*' 2>/dev/null | sort
+}
+
 claude_reset_check() {
 	claude_topkeys >"$TMPD/claude.topkeys.after"
 	claude_user_servers >"$TMPD/claude.servers.after"
+	claude_quarantine_list >"$TMPD/claude.quarantine.after"
 	_lost=""
-	while IFS= read -r _k; do
-		if [ -z "$_k" ]; then continue; fi
-		if ! grep -Fqx -e "$_k" "$TMPD/claude.topkeys.after"; then _lost=$_k; break; fi
-	done <"$TMPD/claude.topkeys.before"
+	if ! cmp -s "$TMPD/claude.quarantine.before" "$TMPD/claude.quarantine.after"; then
+		_lost="the whole file"
+	fi
+	# Claude Code migrates this file on startup and legitimately drops keys it no longer
+	# uses, so a missing preference is not a reset. Losing "projects" is: that is where
+	# every per-directory setting and MCP server lives.
+	if [ -z "$_lost" ] && grep -Fqx -e projects "$TMPD/claude.topkeys.before" &&
+		! grep -Fqx -e projects "$TMPD/claude.topkeys.after"; then
+		_lost=projects
+	fi
 	if [ -z "$_lost" ]; then
 		while IFS= read -r _k; do
 			if [ -z "$_k" ]; then continue; fi
@@ -936,6 +949,7 @@ claude_add() {
 	_bak=$BACKUP_PATH
 	claude_topkeys >"$TMPD/claude.topkeys.before"
 	claude_user_servers >"$TMPD/claude.servers.before"
+	claude_quarantine_list >"$TMPD/claude.quarantine.before"
 	if claude_is_configured; then
 		claude mcp remove cosift --scope user >/dev/null 2>&1
 	fi

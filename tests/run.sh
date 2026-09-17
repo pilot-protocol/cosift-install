@@ -76,6 +76,7 @@ CASE_TABLE=(
   "C54|colour-only-on-a-terminal|tester"
   "C55|no-claude-no-settings-json|tester"
   "C56|closing-launch-offer|tester"
+  "C57|claude-reset-guard-discriminates|tester"
 )
 
 # =====================================================================
@@ -2836,6 +2837,57 @@ $EMAIL
   mock_stop
 }
 
+
+case_C57() { # a migration that drops a stale key is not a reset; losing the data is
+  set_paths
+  local lib=/tmp/cosift-test/c57-lib.sh
+  sed '$d' "$INSTALL_SH" >"$lib"          # everything but the final main "$@"
+
+  mkdir -p "$HOME/.claude"
+  cat >"$HOME/.claude.json" <<'CFG'
+{"autoUpdates": true, "theme": "dark", "projects": {"/w": {"mcpServers": {"weather": {}}}}}
+CFG
+
+  # Claude Code drops keys it no longer uses when it migrates. That must not read as a reset.
+  local out rc
+  out=$(cd "$HOME" && sh -c '. '"$lib"'
+init_tmp
+claude_topkeys >"$TMPD/claude.topkeys.before"
+claude_user_servers >"$TMPD/claude.servers.before"
+claude_quarantine_list >"$TMPD/claude.quarantine.before"
+cat >"$HOME/.claude.json" <<EOF
+{"theme": "dark", "migrationVersion": 14, "projects": {"/w": {"mcpServers": {"weather": {}}}}}
+EOF
+claude_reset_check /tmp/backup 2>&1' ); rc=$?
+  chk_eq "a dropped preference key is not treated as a reset" 0 "$rc"
+  chk_eq "and it says nothing about replacing the config" "" "$out"
+
+  # Losing projects is losing every per-directory setting and MCP server: that is a reset.
+  out=$(cd "$HOME" && sh -c '. '"$lib"'
+init_tmp
+claude_topkeys >"$TMPD/claude.topkeys.before"
+claude_user_servers >"$TMPD/claude.servers.before"
+claude_quarantine_list >"$TMPD/claude.quarantine.before"
+printf "{\"theme\": \"dark\"}\n" >"$HOME/.claude.json"
+claude_reset_check /tmp/backup 2>&1'; ); rc=$?
+  chk "losing projects is caught" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+  chk_contains "and it is reported as a replaced config" "$out" "replaced"
+
+  # A quarantine file appearing is the unambiguous signal, whatever the keys look like.
+  cat >"$HOME/.claude.json" <<'CFG'
+{"theme": "dark", "projects": {"/w": {"mcpServers": {"weather": {}}}}}
+CFG
+  out=$(cd "$HOME" && sh -c '. '"$lib"'
+init_tmp
+claude_topkeys >"$TMPD/claude.topkeys.before"
+claude_user_servers >"$TMPD/claude.servers.before"
+claude_quarantine_list >"$TMPD/claude.quarantine.before"
+mkdir -p "$HOME/.claude/backups"
+: >"$HOME/.claude/backups/.claude.json.corrupted.1700000000"
+claude_reset_check /tmp/backup 2>&1'); rc=$?
+  chk "a .corrupted. quarantine file is caught" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+  chk_contains "and it is reported" "$out" "replaced"
+}
 # =====================================================================
 # container entrypoint
 # =====================================================================
