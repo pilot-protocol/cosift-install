@@ -35,6 +35,13 @@ ARTIFACTS = {
         generated="generated",
         version="VERSION",
     ),
+    "cosift-contribute": Artifact(
+        name="cosift-contribute",
+        body="contribute/BODY.md",
+        profiles="contribute/profiles",
+        generated="contribute/generated",
+        version="contribute/VERSION",
+    ),
 }
 
 DENY_TARGETS = ("CLAUDE.md", "AGENTS.md", "AGENTS.override.md", "SOUL.md")

@@ -1,0 +1,108 @@
+{
+  "artifact": "cosift-contribute",
+  "body_sha256": "15488829010e03a3af3b2a9f1c5bb9f88f8de19f392eecc94c56eb105ef8d1f1",
+  "body_source": "contribute/BODY.md",
+  "dir_mode": "0755",
+  "file_mode": "0644",
+  "generated_root": "contribute/generated",
+  "generator": "tools/generate.py",
+  "harnesses": [
+    {
+      "allowed_frontmatter_keys": [
+        "description",
+        "name",
+        "user-invocable"
+      ],
+      "body_sha256": "15488829010e03a3af3b2a9f1c5bb9f88f8de19f392eecc94c56eb105ef8d1f1",
+      "dir_mode": "0755",
+      "file_mode": "0644",
+      "frontmatter_keys": [
+        "name",
+        "description",
+        "user-invocable"
+      ],
+      "generated_path": "contribute/generated/claude/cosift-contribute/SKILL.md",
+      "harness": "claude",
+      "install_path": "$HOME/.claude/skills/cosift-contribute/SKILL.md",
+      "invocation": "/cosift-contribute",
+      "owned_dir": "$HOME/.claude/skills/cosift-contribute",
+      "prefix_bytes": 504,
+      "prefix_sha256": "6c664fbde8d6f9201e3cf72556a9ad0603dd8d7e579e10f3324d410f014970e7",
+      "sha256": "ff8c38509b769bbd7d17481fe56b5d29066fdfac7a68c259dffbc988e306174f",
+      "shared_parent": "$HOME/.claude/skills",
+      "verified": true
+    },
+    {
+      "allowed_frontmatter_keys": [
+        "description",
+        "name"
+      ],
+      "body_sha256": "15488829010e03a3af3b2a9f1c5bb9f88f8de19f392eecc94c56eb105ef8d1f1",
+      "dir_mode": "0755",
+      "file_mode": "0644",
+      "frontmatter_keys": [
+        "name",
+        "description"
+      ],
+      "generated_path": "contribute/generated/codex/cosift-contribute/SKILL.md",
+      "harness": "codex",
+      "install_path": "$HOME/.agents/skills/cosift-contribute/SKILL.md",
+      "invocation": "$cosift-contribute",
+      "owned_dir": "$HOME/.agents/skills/cosift-contribute",
+      "prefix_bytes": 483,
+      "prefix_sha256": "19f6dc70da8bdf8bf2bbda63eb936789244fb716b96d0ef542885396f3029f22",
+      "sha256": "9652b7d961700fa047add1e8b84dd5e317e7fc324f70bce750f5889feeac2278",
+      "shared_parent": "$HOME/.agents/skills",
+      "verified": false
+    },
+    {
+      "allowed_frontmatter_keys": [
+        "description",
+        "metadata",
+        "name",
+        "version"
+      ],
+      "body_sha256": "15488829010e03a3af3b2a9f1c5bb9f88f8de19f392eecc94c56eb105ef8d1f1",
+      "dir_mode": "0755",
+      "file_mode": "0644",
+      "frontmatter_keys": [
+        "name",
+        "description",
+        "version",
+        "metadata"
+      ],
+      "generated_path": "contribute/generated/hermes/cosift-contribute/SKILL.md",
+      "harness": "hermes",
+      "install_path": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-contribute/SKILL.md",
+      "invocation": "/cosift-contribute",
+      "owned_dir": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-contribute",
+      "prefix_bytes": 867,
+      "prefix_sha256": "d743ae46e51f73bf8ece14b5746e1c886dbe6a8a827e87cf69e631cf6e220f13",
+      "sha256": "102157218a2d3ae3ba0eef5e5a7b72e80d51a6d83c25ff76061ebb6256fb20e3",
+      "shared_parent": "${HERMES_HOME:-$HOME/.hermes}/skills",
+      "verified": false
+    },
+    {
+      "allowed_frontmatter_keys": [
+        "description"
+      ],
+      "body_sha256": "15488829010e03a3af3b2a9f1c5bb9f88f8de19f392eecc94c56eb105ef8d1f1",
+      "dir_mode": "0755",
+      "file_mode": "0644",
+      "frontmatter_keys": [
+        "description"
+      ],
+      "generated_path": "contribute/generated/opencode/cosift-contribute.md",
+      "harness": "opencode",
+      "install_path": "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands/cosift-contribute.md",
+      "invocation": "/cosift-contribute",
+      "owned_dir": null,
+      "prefix_bytes": 459,
+      "prefix_sha256": "50c87b530703f8cd20a4f612b85046efc5191e90bcf51046a4add564c2aeee7c",
+      "sha256": "21d018400c91707caeb3d26ded1bf4b70075a1baa29bbb5daa17157b112965b1",
+      "shared_parent": "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands",
+      "verified": true
+    }
+  ],
+  "version": "1.0.0"
+}

@@ -1,0 +1,41 @@
+{
+  "harness": "hermes",
+  "output_relpath": "cosift-contribute/SKILL.md",
+  "install_path": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-contribute/SKILL.md",
+  "owned_dir": "${HERMES_HOME:-$HOME/.hermes}/skills/cosift-contribute",
+  "shared_parent": "${HERMES_HOME:-$HOME/.hermes}/skills",
+  "invocation": "/cosift-contribute",
+  "verified": false,
+  "allowed_frontmatter_keys": [
+    "description",
+    "metadata",
+    "name",
+    "version"
+  ],
+  "frontmatter": [
+    [
+      "name",
+      "cosift-contribute"
+    ],
+    [
+      "description",
+      "Write an article for the Cosift wiki, or improve one, with the cosift_contribute tool. Use when the user asks to contribute to, write for or add to Cosift, or invokes this skill by name. Reads the style guide and terms from Cosift first, asks the user to agree to the terms before joining, and sends only what the user has approved."
+    ],
+    [
+      "version",
+      "{{VERSION}}"
+    ],
+    [
+      "metadata",
+      {
+        "category": "contribution"
+      }
+    ]
+  ],
+  "banner": [
+    "> **UNVERIFIED HARNESS.** The install path, frontmatter keys and invocation string used for",
+    "> cosift-contribute v{{VERSION}} on Hermes were not verified against a running Hermes build.",
+    "> Hermes also performs no argument substitution, so anything typed after the invocation arrives",
+    "> as ordinary text rather than as a substituted argument."
+  ]
+}
