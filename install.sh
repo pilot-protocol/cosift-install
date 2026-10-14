@@ -3929,6 +3929,11 @@ ENVIRONMENT
   COSIFT_EXTRA_HEADER   one extra header in "Name: value" form, sent on every
                         auth/MCP request and written into each harness config alongside
                         Authorization
+  COSIFT_RELEASE_BASE   where the signed cosift CLI release is fetched from; HTTPS
+                        required except localhost
+                        (default: https://github.com/pilot-protocol/cosift/releases/latest/download)
+  COSIFT_RELEASE_PUBKEY a minisign public key replacing the pinned release key;
+                        accepted only with a localhost COSIFT_RELEASE_BASE
   COSIFT_CODEX_SKILLS_DIR
                         where the codex interview file goes
                         (default: ~/.agents/skills, which is NOT under CODEX_HOME)
@@ -3940,7 +3945,7 @@ EXIT CODES
   2  usage error
   3  preflight failure (curl missing, HOME unwritable, no harness found)
   4  authentication failure
-  5  harness write failure
+  5  harness write failure, or the CLI could not be installed or failed verification
   6  interaction needed but no usable /dev/tty
 
 Configs written by this installer contain a live credential.
@@ -3976,6 +3981,13 @@ check_extra_header() {
 }
 
 preflight() {
+	if [ "$OPT_UNINSTALL" -eq 0 ]; then
+		case "$(uname -s 2>/dev/null)" in
+		MINGW* | MSYS* | CYGWIN* | Windows_NT*)
+			die "$EX_PREFLIGHT" "Windows is not supported: this installer is for Linux and macOS (use WSL)."
+			;;
+		esac
+	fi
 	if [ "$OPT_UNINSTALL" -eq 0 ] && ! have_cmd curl; then
 		die "$EX_PREFLIGHT" "curl is required but not installed."
 	fi
@@ -4416,6 +4428,10 @@ summary() {
 		say "CLI ready    cosift request -query 'Your question'"
 		say "Contribute   cosift contribute https://example.org/article"
 		say "Credits      cosift contribute -credits"
+		if [ "$CLI_INSTALLED" -eq 1 ] && ! onboarding_on_path && [ -z "$ONBOARDED" ]; then
+			say "Add $(dim "$LOCAL_BIN") to your PATH to run cosift:"
+			say "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+		fi
 	fi
 	if [ -n "$TIGHTENED" ]; then
 		say "  $(dim "Tightened to 0600, having been readable by others:")"
@@ -4548,7 +4564,12 @@ onboarding_dry_run() {
 dry_run() {
 	step "Dry run - nothing will be written"
 	if [ "$OPT_CLI" != no ]; then
-		say "CLI: an installed cosift would verify this token at $COSIFT_COMMUNITY_URL"
+		if [ "$OPT_CLI_FETCH" -eq 1 ] && _dasset=$(cli_asset); then
+			if have_cmd minisign; then _dcheck="checksum and minisign signature"; else _dcheck="checksum only (minisign is not installed)"; fi
+			say "CLI: $_dasset would be fetched from $COSIFT_RELEASE_BASE ($_dcheck)"
+			say "     and installed as $CLI_BIN (0755); a current copy is left as it is."
+		fi
+		say "CLI: cosift would verify this token at $COSIFT_COMMUNITY_URL"
 		say "     and create $CLI_SESSION_FILE (0600); existing files stay untouched."
 	fi
 	say ""

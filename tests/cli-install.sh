@@ -2,7 +2,7 @@
 # Offline tests for fetching the signed Cosift CLI. Releases are fabricated and served from
 # 127.0.0.1; no real release host, harness configuration or credential is touched.
 set -eu
-exec python3 - "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)" <<'PY'
+exec python3 - "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)" "$@" <<'PY'
 import hashlib
 import json
 import os
@@ -278,6 +278,177 @@ class ReleaseBase(CLIInstallCase):
         self.assertTrue(self.installed.exists())
 
 
+class Lifecycle(CLIInstallCase):
+    def test_rerun_with_a_current_binary_downloads_no_binary(self):
+        self.publish()
+        self.without_minisign()
+        self.assertEqual(self.run_install().returncode, 0)
+        before = self.installed.stat()
+        self.session.unlink()
+        self.server.requests.clear()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.server.paths(), [f"/{self.ASSET}.sha256"])
+        after = self.installed.stat()
+        self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
+        self.assertEqual(list(self.installed.parent.glob("cosift.cosift-backup-*")), [])
+        self.assertIn("already current", result.stdout)
+        self.assertTrue(self.session.exists())
+
+    def test_an_older_binary_is_replaced_after_a_backup(self):
+        data = self.publish()
+        self.without_minisign()
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_bytes(b"#!/bin/sh\necho old\n")
+        self.installed.chmod(0o755)
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed.read_bytes(), data)
+        backups = list(self.installed.parent.glob("cosift.cosift-backup-*"))
+        self.assertEqual([b.read_bytes() for b in backups], [b"#!/bin/sh\necho old\n"])
+
+    def test_offline_fresh_install_leaves_the_agents_connected(self):
+        before = (self.home / ".codex/config.toml").read_text()
+        result = self.run_install(base="http://127.0.0.1:1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.installed.exists())
+        self.assertFalse(self.session.exists())
+        self.assertIn("Could not fetch", result.stderr)
+        self.assertEqual((self.home / ".codex/config.toml").read_text(), before)
+
+    def test_offline_fresh_install_fails_when_the_cli_is_required(self):
+        self.assertEqual(self.run_install("--cli", base="http://127.0.0.1:1").returncode, 5)
+
+    def test_offline_rerun_keeps_and_connects_the_installed_binary(self):
+        data = self.publish()
+        self.without_minisign()
+        self.assertEqual(self.run_install().returncode, 0)
+        self.session.unlink()
+        result = self.run_install(base="http://127.0.0.1:1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed.read_bytes(), data)
+        self.assertIn("already installed", result.stderr)
+        self.assertTrue(self.session.exists())
+
+    def test_a_missing_binary_asset_is_unavailable_not_installed(self):
+        self.publish()
+        self.without_minisign()
+        (self.release / self.ASSET).unlink()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.installed.exists())
+
+    def install_old_binary(self):
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_text(FAKE_CLI)
+        self.installed.chmod(0o755)
+
+    def assert_old_binary_untouched(self):
+        self.assertEqual(self.installed.read_text(), FAKE_CLI)
+        self.assertEqual(list(self.installed.parent.glob("cosift.cosift-backup-*")), [])
+
+    def test_a_refused_download_leaves_the_installed_binary_in_place(self):
+        self.publish(payload=FAKE_CLI + "# new\n", sha_override="0" * 64)
+        self.without_minisign()
+        self.install_old_binary()
+        self.assertEqual(self.run_install().returncode, 5)
+        self.assert_old_binary_untouched()
+
+    def test_a_failed_binary_download_keeps_and_connects_the_installed_binary(self):
+        self.publish(payload=FAKE_CLI + "# new\n")
+        self.without_minisign()
+        (self.release / self.ASSET).unlink()
+        self.install_old_binary()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_old_binary_untouched()
+        self.assertIn("already installed", result.stderr)
+        self.assertTrue(self.session.exists())
+
+    def test_a_symlinked_binary_is_left_alone_and_connected(self):
+        self.publish()
+        self.without_minisign()
+        target = self.root / "elsewhere-cosift"
+        target.write_text(FAKE_CLI)
+        target.chmod(0o755)
+        self.installed.parent.mkdir(parents=True)
+        self.installed.symlink_to(target)
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.server.requests, [])
+        self.assertTrue(self.installed.is_symlink())
+        self.assertEqual(target.read_text(), FAKE_CLI)
+        self.assertTrue(self.session.exists())
+
+
+class Platforms(CLIInstallCase):
+    def test_each_platform_fetches_its_own_asset(self):
+        for system, machine, asset in (
+            ("Linux", "x86_64", "cosift-linux-amd64"),
+            ("Linux", "aarch64", "cosift-linux-arm64"),
+            ("Darwin", "x86_64", "cosift-darwin-amd64"),
+            ("Darwin", "arm64", "cosift-darwin-arm64"),
+        ):
+            with self.subTest(system=system, machine=machine):
+                shutil.rmtree(self.home / ".local", ignore_errors=True)
+                self.session.unlink(missing_ok=True)
+                self.server.requests.clear()
+                self.OS, self.ARCH = system, machine
+                self.publish(asset=asset)
+                self.without_minisign()
+                result = self.run_install()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"/{asset}", self.server.paths())
+                self.assertEqual(len(self.server.requests), 2)
+                self.assertTrue(self.installed.exists())
+
+    def test_an_unsupported_platform_gets_no_download(self):
+        self.OS, self.ARCH = "FreeBSD", "amd64"
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.server.requests, [])
+        self.assertIn("no Cosift CLI release", result.stderr)
+        self.assertEqual(self.run_install("--cli").returncode, 5)
+
+    def test_windows_is_refused_before_anything_is_written(self):
+        before = (self.home / ".codex/config.toml").read_text()
+        for system in ("MINGW64_NT-10.0-22631", "MSYS_NT-10.0", "CYGWIN_NT-10.0", "Windows_NT"):
+            with self.subTest(system=system):
+                self.OS = system
+                for extra in ((), ("--dry-run",)):
+                    result = self.run_install(*extra)
+                    self.assertEqual(result.returncode, 3, result.stderr)
+                    self.assertIn("Windows", result.stderr)
+                self.assertEqual(self.server.requests, [])
+                self.assertFalse((self.home / ".local").exists())
+                self.assertEqual((self.home / ".codex/config.toml").read_text(), before)
+
+
+class Reporting(CLIInstallCase):
+    def test_dry_run_describes_the_fetch_and_makes_none(self):
+        result = self.run_install("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(self.ASSET, result.stdout)
+        self.assertIn(self.server.base, result.stdout)
+        self.assertIn(str(self.installed), result.stdout)
+        self.assertEqual(self.server.requests, [])
+        self.assertFalse((self.home / ".local").exists())
+
+    def test_the_path_hint_appears_only_when_the_install_dir_is_not_on_path(self):
+        self.publish()
+        self.without_minisign()
+        self.assertIn("export PATH", self.run_install().stdout)
+        shutil.rmtree(self.home / ".local")
+        self.session.unlink()
+        self.env["PATH"] += ":" + str(self.home / ".local/bin")
+        self.assertNotIn("export PATH", self.run_install().stdout)
+
+    def test_help_documents_the_flag_and_the_overrides(self):
+        text = self.run_install("--help").stdout
+        for needle in ("--no-cli-download", "COSIFT_RELEASE_BASE", "COSIFT_RELEASE_PUBKEY"):
+            self.assertIn(needle, text)
+
+
 PINNED_KEY = "RWSmd6QcwOKEYVXr/z69ZerbdM2NBNNx49oESn3U5jqniaw/71P3ppdz"
 
 FAKE_MINISIGN = "#!/bin/sh\n" + '''
@@ -357,6 +528,17 @@ class Signed(CLIInstallCase):
         result = self.run_install()
         self.assertEqual(result.returncode, 5, result.stderr)
         self.assertFalse(self.installed.exists())
+
+    def test_a_refused_signature_leaves_the_installed_binary_in_place(self):
+        self.publish(payload=FAKE_CLI + "# new\n")
+        _, other = self.keygen(self.root / "keys", "other")
+        self.sign(key=other)
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_text(FAKE_CLI)
+        self.installed.chmod(0o755)
+        self.assertEqual(self.run_install().returncode, 5)
+        self.assertEqual(self.installed.read_text(), FAKE_CLI)
+        self.assertEqual(list(self.installed.parent.glob("cosift.cosift-backup-*")), [])
 
     def test_a_missing_signature_is_refused(self):
         self.publish()
