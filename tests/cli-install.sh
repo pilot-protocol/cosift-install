@@ -145,7 +145,7 @@ class CLIInstallCase(unittest.TestCase):
     def build_tools(self, with_minisign):
         names = list(TOOLS) + (["minisign"] if with_minisign else [])
         for name in names:
-            found = shutil.which(name)
+            found = sys.executable if name == "python3" else shutil.which(name)
             if found and name != "curl":
                 (self.tools / name).symlink_to(found)
         for name, body in (
@@ -163,12 +163,14 @@ class CLIInstallCase(unittest.TestCase):
         (self.release / f"{asset}.sha256").write_text(f"{digest}  {asset}\n")
         return data
 
+    ONBOARDING = "--no-onboarding"
+
     def run_install(self, *extra, base=None):
         env = dict(self.env, FAKE_OS=self.OS, FAKE_ARCH=self.ARCH)
         if base is not None:
             env["COSIFT_RELEASE_BASE"] = base
         result = subprocess.run(
-            ["/bin/sh", str(INSTALLER), "--harness=codex", "--yes", "--no-onboarding", "--no-launch", *extra],
+            ["/bin/sh", str(INSTALLER), "--harness=codex", "--yes", self.ONBOARDING, "--no-launch", *extra],
             env=env, capture_output=True, text=True, timeout=60,
         )
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
@@ -392,6 +394,82 @@ class Uninstall(CLIInstallCase):
         state_file.write_text(state_file.read_text().replace(str(self.installed), str(other)))
         self.assertEqual(self.run_uninstall().returncode, 0)
         self.assertTrue(other.exists())
+
+
+class OnboardedState:
+    ONBOARDING = "--onboarding"
+    SEP = ": "
+
+    def state_text(self):
+        return (self.home / "config/cosift/state.json").read_text()
+
+    def complete(self, *args):
+        env = dict(self.env, FAKE_OS=self.OS, FAKE_ARCH=self.ARCH)
+        cmd = self.home / ".local/bin/cosift-onboarding"
+        result = subprocess.run(["/bin/sh", str(cmd), "complete", *args], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f'"cli_path"{self.SEP}"', self.state_text())
+
+    def install_and_complete(self, *args):
+        self.publish()
+        self.without_minisign()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.complete(*args)
+
+    def test_an_unchanged_binary_is_removed_after_the_interview(self):
+        self.install_and_complete()
+        result = self.run_uninstall()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.installed.exists())
+
+    def test_an_unchanged_binary_is_removed_after_the_interview_is_declined(self):
+        self.install_and_complete("--declined")
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertFalse(self.installed.exists())
+
+    def test_a_rerun_with_a_current_binary_keeps_the_record_after_the_interview(self):
+        old = b"#!/bin/sh\necho old\n"
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_bytes(old)
+        self.install_and_complete()
+        before = json.loads(self.state_text())
+        self.assertNotEqual(before["cli_backup"], "")
+        self.assertEqual(self.run_install().returncode, 0)
+        after = json.loads(self.state_text())
+        for key in ("cli_path", "cli_sha256", "cli_backup"):
+            self.assertEqual(after[key], before[key], key)
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertEqual(self.installed.read_bytes(), old)
+
+    def test_a_newer_release_after_the_interview_still_restores_the_original(self):
+        old = b"#!/bin/sh\necho old\n"
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_bytes(old)
+        self.install_and_complete()
+        self.publish(payload=FAKE_CLI + "# v2\n")
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertEqual(self.installed.read_text(), FAKE_CLI + "# v2\n")
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertEqual(self.installed.read_bytes(), old)
+
+
+class OnboardedWithPython(OnboardedState, CLIInstallCase):
+    def test_the_interview_leaves_state_pretty_printed(self):
+        self.install_and_complete()
+        self.assertIn('\n  "onboarded": true', self.state_text())
+
+
+class OnboardedWithoutPython(OnboardedState, CLIInstallCase):
+    SEP = ":"
+
+    def setUp(self):
+        super().setUp()
+        (self.tools / "python3").unlink()
+
+    def test_the_interview_leaves_state_on_one_line(self):
+        self.install_and_complete()
+        self.assertEqual(self.state_text().count("\n"), 1)
 
 
 class ReleaseBase(CLIInstallCase):

@@ -2611,7 +2611,7 @@ write_state() {
 # A string value from state.json; whitespace is kept, unlike the list readers below.
 state_str() {
 	if [ ! -f "$STATE_FILE" ]; then return 1; fi
-	sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$STATE_FILE" | head -1
+	sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$STATE_FILE" | head -1
 }
 
 # REC_* is the binary record for state.json: this run's install, else the earlier record.
