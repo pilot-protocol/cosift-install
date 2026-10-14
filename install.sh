@@ -65,6 +65,9 @@ COSIFT_MCP_URL="${COSIFT_MCP_URL:-https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/
 COSIFT_COMMUNITY_URL="${COSIFT_COMMUNITY_URL:-https://cosift.pilotprotocol.network}"
 COSIFT_EXTRA_HEADER="${COSIFT_EXTRA_HEADER:-}"
 COSIFT_RELEASE_BASE="${COSIFT_RELEASE_BASE:-https://github.com/pilot-protocol/cosift/releases/latest/download}"
+COSIFT_RELEASE_PUBKEY="${COSIFT_RELEASE_PUBKEY:-}"
+# Key ID 6184E2C01CA477A6: the minisign key every cosift release is signed with.
+RELEASE_PUBKEY_PINNED="RWSmd6QcwOKEYVXr/z69ZerbdM2NBNNx49oESn3U5jqniaw/71P3ppdz"
 
 MCP_PROTOCOL_VERSION="2025-06-18"
 HTTP_TIMEOUT=30
@@ -4211,6 +4214,7 @@ sha256_file() {
 }
 
 RELEASE_PROTO='=https'
+RELEASE_PUBKEY=$RELEASE_PUBKEY_PINNED
 
 # The release host is HTTPS only; plain http is accepted for localhost, which is how a
 # fabricated release is served in tests. An @ would let a localhost-looking prefix be userinfo.
@@ -4228,6 +4232,39 @@ release_base_check() {
 		die "$EX_USAGE" "COSIFT_RELEASE_BASE must be an https:// URL (http only for localhost)."
 		;;
 	esac
+	if [ -n "$COSIFT_RELEASE_PUBKEY" ]; then
+		if [ "$RELEASE_PROTO" = '=https' ]; then
+			die "$EX_USAGE" "COSIFT_RELEASE_PUBKEY is only accepted together with a localhost COSIFT_RELEASE_BASE."
+		fi
+		RELEASE_PUBKEY=$COSIFT_RELEASE_PUBKEY
+	fi
+}
+
+# minisign must accept the signature under the pinned key, and its trusted comment must name
+# this very asset: a valid signature on another platform's binary is not this file's.
+cli_signature_ok() {
+	_sig="$1.minisig"
+	if ! release_get "${1##*/}.minisig" "$_sig"; then
+		err "could not fetch the signature for ${1##*/}; nothing was installed."
+		return 1
+	fi
+	if ! _mout=$(minisign -V -m "$1" -x "$_sig" -P "$RELEASE_PUBKEY" 2>&1); then
+		err "the signature on ${1##*/} does not verify under the Cosift release key; nothing was installed."
+		return 1
+	fi
+	_tc=$(printf '%s\n' "$_mout" | sed -n 's/^Trusted comment: //p')
+	_ver=${_tc#cosift }
+	_ver=${_ver% "${1##*/}"}
+	case "$_tc" in
+	"cosift "*" ${1##*/}")
+		case "$_ver" in
+		"" | *" "*) ;;
+		*) return 0 ;;
+		esac
+		;;
+	esac
+	err "the signature on ${1##*/} was made for another file; nothing was installed."
+	return 1
 }
 
 # release_get <asset> <out-file>. No credential header is ever sent here.
@@ -4294,8 +4331,12 @@ cli_install() {
 		err "the downloaded $_asset does not match the release checksum; nothing was installed."
 		return 2
 	fi
-	warn "minisign is not installed, so only the release checksum (over TLS) was checked."
-	warn "Install minisign and re-run for a signature check."
+	if have_cmd minisign; then
+		if ! cli_signature_ok "$_cdir/$_asset"; then return 2; fi
+	else
+		warn "minisign is not installed, so only the release checksum (over TLS) was checked."
+		warn "Install minisign and re-run for a signature check."
+	fi
 	if ! onboarding_mkdir "$LOCAL_BIN"; then return 1; fi
 	if ! backup_file "$CLI_BIN"; then return 1; fi
 	if ! onboarding_place "$_cdir/$_asset" "$CLI_BIN" 755; then return 1; fi

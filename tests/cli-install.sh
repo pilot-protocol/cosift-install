@@ -190,11 +190,21 @@ class FreshInstall(CLIInstallCase):
         self.assertEqual(sorted(self.server.paths()), sorted([f"/{self.ASSET}", f"/{self.ASSET}.sha256"]))
 
     def test_no_credential_is_sent_to_the_release_host(self):
+        self.env["COSIFT_EXTRA_HEADER"] = "X-Cosift-Test: s3cret"
         self.publish()
         self.without_minisign()
         self.assertEqual(self.run_install().returncode, 0)
         for _, headers in self.server.requests:
             self.assertEqual({k.lower() for k in headers} & {"authorization", "cookie", "x-cosift-test"}, set())
+
+    def test_a_curlrc_does_not_apply_to_the_release_fetch(self):
+        self.publish()
+        self.without_minisign()
+        (self.home / ".curlrc").write_text("header = \"X-Cosift-Test: from-curlrc\"\n")
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertEqual(len(self.server.requests), 2)
+        for _, headers in self.server.requests:
+            self.assertNotIn("x-cosift-test", {k.lower() for k in headers})
 
     def test_checksum_mismatch_installs_nothing(self):
         self.publish(sha_override="0" * 64)
@@ -204,6 +214,15 @@ class FreshInstall(CLIInstallCase):
         self.assertFalse(self.installed.exists())
         self.assertFalse(self.session.exists())
         self.assertIn("checksum", result.stderr)
+
+    def test_without_minisign_the_checksum_alone_is_trusted_with_a_notice(self):
+        data = self.publish()
+        self.without_minisign()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed.read_bytes(), data)
+        self.assertIn("minisign is not installed", result.stderr)
+        self.assertNotIn(f"/{self.ASSET}.minisig", self.server.paths())
 
     def test_no_cli_download_uses_the_cosift_on_path(self):
         (self.tools / "cosift").write_text(FAKE_CLI)
@@ -244,11 +263,156 @@ class ReleaseBase(CLIInstallCase):
         result = self.run_install(base="http://127.0.0.1:80@release.example.invalid")
         self.assertEqual(result.returncode, 2, result.stderr)
 
+    def test_a_host_that_only_starts_like_localhost_is_refused(self):
+        self.env["COSIFT_RELEASE_PUBKEY"] = PINNED_KEY
+        for base in ("http://localhost.attacker.example", "http://127.0.0.1.example.invalid"):
+            with self.subTest(base=base):
+                result = self.run_install(base=base)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(self.server.requests, [])
+
     def test_a_trailing_slash_is_accepted(self):
         self.publish()
         self.without_minisign()
         self.assertEqual(self.run_install(base=self.server.base + "/").returncode, 0)
         self.assertTrue(self.installed.exists())
+
+
+PINNED_KEY = "RWSmd6QcwOKEYVXr/z69ZerbdM2NBNNx49oESn3U5jqniaw/71P3ppdz"
+
+FAKE_MINISIGN = "#!/bin/sh\n" + '''
+printf '%s\\n' "$*" >>"$MINISIGN_LOG"
+while [ $# -gt 0 ]; do
+  case "$1" in -m) file=$2 ;; esac
+  shift
+done
+printf 'Signature and comment signature verified\\nTrusted comment: %s\\n' "${FAKE_TC:-cosift v9.9.9 $(basename "$file")}"
+exit "${FAKE_RC:-0}"
+'''
+
+
+@unittest.skipUnless(MINISIGN, "minisign is needed to sign the fabricated releases")
+class Signed(CLIInstallCase):
+    def setUp(self):
+        super().setUp()
+        keys = self.root / "keys"
+        keys.mkdir()
+        self.pub, self.sec = self.keygen(keys, "good")
+        self.env["COSIFT_RELEASE_PUBKEY"] = self.pub
+
+    def keygen(self, directory, name):
+        subprocess.run(
+            [MINISIGN, "-G", "-W", "-f", "-p", str(directory / f"{name}.pub"), "-s", str(directory / f"{name}.key")],
+            check=True, capture_output=True,
+        )
+        return (directory / f"{name}.pub").read_text().splitlines()[1], directory / f"{name}.key"
+
+    def sign(self, asset=None, key=None, comment=None):
+        asset = asset or self.ASSET
+        comment = comment or f"cosift {VERSION} {asset}"
+        subprocess.run(
+            [MINISIGN, "-S", "-s", str(key or self.sec), "-m", str(self.release / asset),
+             "-x", str(self.release / f"{asset}.minisig"), "-t", comment],
+            check=True, capture_output=True,
+        )
+
+    def test_a_signed_release_is_verified_and_installed(self):
+        data = self.publish()
+        self.sign()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed.read_bytes(), data)
+        self.assertIn(f"/{self.ASSET}.minisig", self.server.paths())
+        self.assertNotIn("minisign is not installed", result.stderr)
+
+    def test_a_forged_binary_with_a_matching_checksum_is_refused(self):
+        self.publish()
+        self.sign()
+        self.publish(payload=FAKE_CLI + "# backdoor\n")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertFalse(self.installed.exists())
+        self.assertFalse(self.session.exists())
+        self.assertIn("signature", result.stderr)
+
+    def test_a_release_signed_by_another_key_is_refused(self):
+        self.publish()
+        _, other = self.keygen(self.root / "keys", "other")
+        self.sign(key=other)
+        result = self.run_install()
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertFalse(self.installed.exists())
+
+    def test_a_signature_for_another_platform_is_refused(self):
+        self.publish()
+        self.sign(comment=f"cosift {VERSION} cosift-darwin-arm64")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertFalse(self.installed.exists())
+        self.assertIn("another file", result.stderr)
+
+    def test_a_valid_signature_does_not_excuse_a_wrong_checksum(self):
+        self.publish(sha_override="0" * 64)
+        self.sign()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertFalse(self.installed.exists())
+
+    def test_a_missing_signature_is_refused(self):
+        self.publish()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertFalse(self.installed.exists())
+
+
+class PinnedKey(CLIInstallCase):
+    def setUp(self):
+        super().setUp()
+        (self.tools / "minisign").unlink(missing_ok=True)
+        (self.tools / "minisign").write_text(FAKE_MINISIGN)
+        (self.tools / "minisign").chmod(0o755)
+        self.log = self.root / "minisign.log"
+        self.env["MINISIGN_LOG"] = str(self.log)
+        self.publish()
+        (self.release / f"{self.ASSET}.minisig").write_text("fabricated\n")
+
+    def verified_with(self):
+        return self.log.read_text().split("-P ")[1].split()[0]
+
+    def test_the_pinned_key_is_what_verifies_a_release(self):
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.verified_with(), PINNED_KEY)
+
+    def test_only_a_well_formed_trusted_comment_for_this_asset_passes(self):
+        for comment in (
+            f"cosift v1 v2 {self.ASSET}",
+            f"cosift  {self.ASSET}",
+            f"cosift v9.9.9 x{self.ASSET}",
+            f"release v9.9.9 {self.ASSET}",
+            f"cosift v9.9.9 {self.ASSET} extra",
+            "",
+        ):
+            with self.subTest(comment=comment):
+                self.env["FAKE_TC"] = comment or "-"
+                result = self.run_install()
+                self.assertEqual(result.returncode, 5, result.stderr)
+                self.assertFalse(self.installed.exists())
+
+    def test_a_failing_minisign_is_a_refusal_whatever_it_printed(self):
+        self.env["FAKE_RC"] = "1"
+        result = self.run_install()
+        self.assertEqual(result.returncode, 5, result.stderr)
+        self.assertFalse(self.installed.exists())
+
+    def test_the_key_can_be_replaced_only_for_a_localhost_release(self):
+        self.env["COSIFT_RELEASE_PUBKEY"] = "RWQreplacedreplacedreplacedreplacedreplacedreplaced"
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertEqual(self.verified_with(), self.env["COSIFT_RELEASE_PUBKEY"])
+        self.log.unlink()
+        result = self.run_install(base="https://release.example.invalid")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(self.log.exists())
 
 
 unittest.main()
