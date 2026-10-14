@@ -13,6 +13,8 @@ check:
 	@sh -n $(REPO)/install.sh && echo "install.sh: POSIX syntax ok"
 	@$(REPO)/tools/shellcheck.sh $(REPO)/install.sh
 	@sh $(REPO)/onboarding/tests/shell/run.sh
+	@sh $(REPO)/tests/community-cli.sh
+	@sh $(REPO)/tests/cli-install.sh
 
 # Any change under onboarding/ needs both steps; the second is what reaches users.
 generate:

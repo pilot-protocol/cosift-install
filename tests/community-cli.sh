@@ -2,7 +2,7 @@
 # Offline installer handoff tests. Fixtures use only fabricated credentials and
 # isolated HOME/PATH values; no real harness configuration or server is read.
 set -eu
-exec python3 - "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)" <<'PY'
+exec python3 - "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)" <<'PY'
 import json
 import os
 from pathlib import Path
@@ -88,7 +88,7 @@ print('{"logged_in":true}')
 
     def run_install(self, *extra):
         result = subprocess.run(
-            ["/bin/sh", str(INSTALLER), "--harness=codex", "--yes", "--no-onboarding", "--no-launch", *extra],
+            ["/bin/sh", str(INSTALLER), "--harness=codex", "--yes", "--no-onboarding", "--no-launch", "--no-cli-download", *extra],
             env=self.env, capture_output=True, text=True, timeout=20,
         )
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
