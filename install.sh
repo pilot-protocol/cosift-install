@@ -4428,6 +4428,11 @@ summary() {
 		say "CLI ready    cosift request -query 'Your question'"
 		say "Contribute   cosift contribute https://example.org/article"
 		say "Credits      cosift contribute -credits"
+		_first=$(command -v cosift 2>/dev/null || :)
+		if [ "$CLI_PATH" = "$CLI_BIN" ] && [ -n "$_first" ] && [ "$_first" != "$CLI_BIN" ]; then
+			warn "typing cosift runs $_first, which is not the one just installed ($CLI_BIN)."
+			warn "put $LOCAL_BIN first on your PATH, or remove the other one."
+		fi
 		if [ "$CLI_INSTALLED" -eq 1 ] && ! onboarding_on_path && [ -z "$ONBOARDED" ]; then
 			say "Add $(dim "$LOCAL_BIN") to your PATH to run cosift:"
 			say "  export PATH=\"\$HOME/.local/bin:\$PATH\""
@@ -4681,12 +4686,16 @@ do_install() {
 	fi
 	obtain_token
 	configure_harnesses
+	_cli_failed=0
 	if final_verify; then
-		if ! community_cli_step; then
-			exit "$EX_HARNESS"
-		fi
+		if ! community_cli_step; then _cli_failed=1; fi
 	fi
 	if ! write_state; then
+		exit "$EX_HARNESS"
+	fi
+	if [ "$_cli_failed" -eq 1 ]; then
+		err "your agents are configured and recorded; only the CLI step failed."
+		err "undo the agent configuration with: install.sh --uninstall"
 		exit "$EX_HARNESS"
 	fi
 	summary

@@ -173,6 +173,13 @@ class CLIInstallCase(unittest.TestCase):
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
         return result
 
+    def run_uninstall(self):
+        env = dict(self.env, FAKE_OS=self.OS, FAKE_ARCH=self.ARCH)
+        return subprocess.run(
+            ["/bin/sh", str(INSTALLER), "--uninstall", "--yes"],
+            env=env, capture_output=True, text=True, timeout=60,
+        )
+
     def without_minisign(self):
         (self.tools / "minisign").unlink(missing_ok=True)
 
@@ -381,6 +388,50 @@ class Lifecycle(CLIInstallCase):
         self.assertTrue(self.session.exists())
 
 
+FAKE_SHASUM = f"#!{sys.executable}\n" + '''
+import hashlib, sys
+args = sys.argv[1:]
+algo = hashlib.sha256 if args[:2] == ["-a", "256"] else hashlib.sha1
+print(algo(open(args[-1], "rb").read()).hexdigest(), args[-1])
+'''
+
+FAKE_OPENSSL = f"#!{sys.executable}\n" + '''
+import hashlib, sys
+args = sys.argv[1:]
+assert args[:2] == ["dgst", "-sha256"], args
+print(f"SHA2-256({args[-1]})= " + hashlib.sha256(open(args[-1], "rb").read()).hexdigest())
+'''
+
+
+class HashTools(CLIInstallCase):
+    def only_hasher(self, name, body):
+        for other in ("sha256sum", "shasum", "openssl"):
+            (self.tools / other).unlink(missing_ok=True)
+        (self.tools / name).write_text(body)
+        (self.tools / name).chmod(0o755)
+        data = self.publish()
+        self.without_minisign()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed.read_bytes(), data)
+
+    def test_shasum_is_asked_for_sha256(self):
+        self.only_hasher("shasum", FAKE_SHASUM)
+
+    def test_openssl_is_asked_for_sha256(self):
+        self.only_hasher("openssl", FAKE_OPENSSL)
+
+    def test_no_hashing_tool_installs_nothing(self):
+        for other in ("sha256sum", "shasum", "openssl"):
+            (self.tools / other).unlink(missing_ok=True)
+        self.publish()
+        self.without_minisign()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.installed.exists())
+        self.assertIn("cannot be checked", result.stderr)
+
+
 class Platforms(CLIInstallCase):
     def test_each_platform_fetches_its_own_asset(self):
         for system, machine, asset in (
@@ -442,6 +493,25 @@ class Reporting(CLIInstallCase):
         self.session.unlink()
         self.env["PATH"] += ":" + str(self.home / ".local/bin")
         self.assertNotIn("export PATH", self.run_install().stdout)
+
+    def test_another_cosift_earlier_on_path_is_named(self):
+        self.publish()
+        self.without_minisign()
+        (self.tools / "cosift").write_text(FAKE_CLI)
+        (self.tools / "cosift").chmod(0o755)
+        self.env["PATH"] += ":" + str(self.home / ".local/bin")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(self.tools / "cosift"), result.stderr)
+        self.assertIn(str(self.installed), result.stderr)
+
+    def test_the_installed_cosift_first_on_path_needs_no_notice(self):
+        self.publish()
+        self.without_minisign()
+        self.env["PATH"] = str(self.home / ".local/bin") + ":" + self.env["PATH"]
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("is not the one", result.stderr)
 
     def test_help_documents_the_flag_and_the_overrides(self):
         text = self.run_install("--help").stdout
@@ -539,6 +609,17 @@ class Signed(CLIInstallCase):
         self.assertEqual(self.run_install().returncode, 5)
         self.assertEqual(self.installed.read_text(), FAKE_CLI)
         self.assertEqual(list(self.installed.parent.glob("cosift.cosift-backup-*")), [])
+
+    def test_a_refused_cli_still_records_the_configured_agents(self):
+        self.publish()
+        result = self.run_install()
+        self.assertEqual(result.returncode, 5, result.stderr)
+        state = json.loads((self.home / "config/cosift/state.json").read_text())
+        self.assertEqual(state["harnesses_configured"], ["codex"])
+        self.assertIn("--uninstall", result.stderr)
+        removed = self.run_uninstall()
+        self.assertEqual(removed.returncode, 0, removed.stderr)
+        self.assertNotIn(TOKEN, (self.home / ".codex/config.toml").read_text())
 
     def test_a_missing_signature_is_refused(self):
         self.publish()
