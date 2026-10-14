@@ -18,19 +18,22 @@ What it does:
    configured. If that file is missing, or names no harness, it falls back to looking for our
    entry in each of the three supported harnesses.
 2. Removes the `cosift` entry from each of them. Other MCP servers are not touched.
-3. Removes the onboarding interview file, and then the `cosift-onboarding` directory it created
+3. Removes the contributor skill file for each harness (found by the marker inside it, not by
+   the state file), and the `cosift-contribute` directory it created if that is empty. A file at
+   one of those paths that we did not write is left in place.
+4. Removes the onboarding interview file, and then the `cosift-onboarding` directory it created
    for that file, only if that directory is empty — a `.cosift-backup-*` file left in there
    keeps it from being empty, so the directory stays. A file we wrote, this release's or an
    earlier release's, is removed as it is; a file at one of those paths that we did not write is
    backed up before it is removed.
-4. Removes `~/.local/bin/cosift-onboarding`, but only if that file is byte-identical to the one
+5. Removes `~/.local/bin/cosift-onboarding`, but only if that file is byte-identical to the one
    it installed. If it is not — an older release's copy, or one you edited — it says so and
    leaves the file; remove it by hand.
-5. Removes the entries it added to `~/.claude/settings.json`: the `SessionStart` hook and the
+6. Removes the entries it added to `~/.claude/settings.json`: the `SessionStart` hook and the
    five permission grants. Nothing else in that file is touched.
-6. Removes `state.json`, and `onboarding.json` beside it.
+7. Removes `state.json`, and `onboarding.json` beside it.
 
-It does not trust the state file for step 3: it checks all three interview paths directly and
+It does not trust the state file for steps 3 and 4: it checks all three paths of each directly and
 removes whatever it recognises as ours. A file left behind by an earlier run is still found,
 and re-running after you fix a permission problem still clears it.
 
@@ -46,7 +49,7 @@ backups below still contain the token.
 
 There is no uninstall preview: `--dry-run` with `--uninstall` is a usage error and exits `2`.
 
-The Cosift CLI binary and `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json`
+The Cosift CLI binary (`~/.local/bin/cosift`) and `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json`
 are left available for independent CLI use. Run `cosift logout` to revoke and
 remove that session. This also invalidates the same token in any remaining
 agent configuration; it does not revoke other tokens belonging to the account.
@@ -184,6 +187,18 @@ opencode mcp list      # should exit 0 and no longer list cosift
 ```
 
 If that command fails after your edit, restore your backup (below) and try again.
+
+## Removing the contributor skill
+
+One file per harness, written unless you passed `--no-contribute`:
+
+```sh
+rm -f ~/.claude/skills/cosift-contribute/SKILL.md
+rmdir ~/.claude/skills/cosift-contribute
+rm -f ~/.agents/skills/cosift-contribute/SKILL.md
+rmdir ~/.agents/skills/cosift-contribute
+rm -f ~/.config/opencode/commands/cosift-contribute.md
+```
 
 ## Removing the onboarding interview
 

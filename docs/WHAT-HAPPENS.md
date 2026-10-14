@@ -6,8 +6,9 @@ every step rather than take a summary on trust.
 
 Everything here is checkable against two files: `install.sh` and the `cosift-onboarding`
 command, whose source the installer carries inside itself (`onboarding/bin/cosift-onboarding`
-in this repository). The optional CLI handoff also invokes the already installed
-[Cosift CLI](https://github.com/pilot-protocol/cosift). No code is fetched at runtime.
+in this repository). One program is downloaded: the signed [Cosift CLI](https://github.com/pilot-protocol/cosift)
+release for your platform (step 8), which the installer then runs once to connect it. No other
+code is fetched.
 
 ## 1. The install command
 
@@ -26,15 +27,23 @@ In order, the script:
 4. Gets a credential: it scans the configs listed below for a `ck_…` token and offers each one
    to the Cosift MCP endpoint; the first the server accepts is reused. If none is, it asks for
    your email address and a six-digit code.
-5. Writes the `cosift` MCP server entry into each selected harness config.
+5. Writes the `cosift` MCP server entry into each selected harness config, and next to each
+   one the contributor skill described in [section 2](#2-what-it-installs-for-the-interview)
+   (`--no-contribute` skips the skill).
 6. Installs onboarding, unless you declined it: one file per harness, the local command, and
    on Claude Code the hook and permission grants in `~/.claude/settings.json`.
 7. Makes one MCP `initialize` call with the credential it just wrote, to prove the entry works.
-8. If a compatible `cosift` binary is on `PATH`, passes the verified token to its
-   `login` command through the subprocess environment. The CLI verifies it at
+8. Downloads the `cosift` release binary for your platform from the release host (see
+   [Network calls](#network-calls)) and checks it before it is installed: when `minisign` is
+   present, its signature against the release key pinned in `install.sh`, and in every case the
+   published SHA-256. Without `minisign` it says so and relies on the checksum over TLS alone.
+   Only a binary that passes is copied to `~/.local/bin/cosift` (`0755`); a failed check keeps
+   any `cosift` already there. Then it passes the verified token to the binary's `login`
+   command through the subprocess environment. The CLI verifies it at
    `GET $COSIFT_COMMUNITY_URL/api/me` and creates a private origin-bound session.
-   `--no-cli` skips this, and an existing session is never overwritten. No binary
-   is downloaded. `--cli` makes an unavailable or unsuccessful CLI handoff an error.
+   `--no-cli` skips the download and this handoff, `--no-cli-download` uses the `cosift` already
+   on `PATH` instead, and an existing session is never overwritten. `--cli` makes an unavailable
+   or unsuccessful CLI step an error. Windows is refused before anything is written.
 9. Writes its state file and prints a summary of every path it touched.
 
 `--dry-run` stops after step 3: it prints the per-harness plan, including the `settings.json`
@@ -50,7 +59,8 @@ call with a credential already on the machine, to say whether that one would be 
 | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | same |
 | `$XDG_CONFIG_HOME/opencode/opencode.json[c]`, falling back to `~/.config/opencode/opencode.json[c]` | same |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what a previous run configured |
-| the interview paths in [section 2](#2-what-it-installs-for-the-interview) | whether a file is already there, and whether it is byte-identical to ours |
+| the interview and contributor-skill paths in [section 2](#2-what-it-installs-for-the-interview) | whether a file is already there, and whether it is byte-identical to ours |
+| `~/.local/bin/cosift` | whether the installed CLI already matches the release checksum |
 
 ### Files it writes
 
@@ -63,6 +73,10 @@ call with a credential already on the machine, to say whether that one would be 
 | `${COSIFT_CODEX_SKILLS_DIR:-~/.agents/skills}/cosift-onboarding/SKILL.md` | the interview, on Codex | `0644` |
 | `${XDG_CONFIG_HOME:-~/.config}/opencode/commands/cosift-onboarding.md` | the interview, on opencode | `0644` |
 | `~/.local/bin/cosift-onboarding` | the local command described in [section 5](#5-cosift-onboarding-digest) | `0755` |
+| `~/.claude/skills/cosift-contribute/SKILL.md` | the contributor skill, on Claude Code | `0644` |
+| `${COSIFT_CODEX_SKILLS_DIR:-~/.agents/skills}/cosift-contribute/SKILL.md` | the contributor skill, on Codex | `0644` |
+| `${XDG_CONFIG_HOME:-~/.config}/opencode/commands/cosift-contribute.md` | the contributor skill, on opencode | `0644` |
+| `~/.local/bin/cosift` | the verified Cosift CLI release binary | `0755` |
 | `~/.claude/settings.json` | the hook and the permission grants in [section 3](#3-the-change-to-claudesettingsjson) | preserved; `0600` if the installer created the file |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what was installed | `0600` |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json` | token, origin and expiry for the installed CLI; only if this file does not already exist | `0600` |
@@ -80,8 +94,8 @@ can read the token, and so can any backup taken after it was written.
 
 ### Network calls
 
-The installer contacts the auth and MCP hosts, plus the community origin when
-connecting an installed CLI:
+The installer contacts the auth and MCP hosts, the release host when it fetches the CLI, and
+the community origin when connecting it:
 
 | Request | To | Body |
 | --- | --- | --- |
@@ -89,6 +103,7 @@ connecting an installed CLI:
 | `POST /auth/verify` | `$COSIFT_AUTH_BASE` | the request id from the previous call and the six-digit code |
 | `POST` the MCP endpoint | `$COSIFT_MCP_URL` | a JSON-RPC `initialize`, carrying the credential in a header |
 | `GET /api/me` through the installed CLI | `$COSIFT_COMMUNITY_URL` | no body; the same credential in the authorization header |
+| `GET` `cosift-<os>-<arch>.sha256`, `cosift-<os>-<arch>` and, with `minisign`, `cosift-<os>-<arch>.minisig` | `$COSIFT_RELEASE_BASE`, default `https://github.com/pilot-protocol/cosift/releases/latest/download` | no body and no credential header; HTTPS only (plain http is accepted for localhost) |
 
 `/auth/start` returns the same `200` for a deliverable address, an unknown one, a malformed one
 and one over its cap, on purpose — a differing response would let anyone test whether an address
@@ -98,9 +113,22 @@ sent.
 There is no telemetry: no install ping, no analytics, no crash reporter, nothing about your
 machine, your projects or your usage.
 
-## 2. What it installs for the interview
+## 2. What it installs for the interview and the contributor skill
 
-One file per selected harness, plus one command:
+The contributor skill is one file per selected harness, written with the harness config:
+
+| Harness | File |
+| --- | --- |
+| Claude Code | `~/.claude/skills/cosift-contribute/SKILL.md` |
+| Codex CLI | `${COSIFT_CODEX_SKILLS_DIR:-~/.agents/skills}/cosift-contribute/SKILL.md` |
+| opencode | `${XDG_CONFIG_HOME:-~/.config}/opencode/commands/cosift-contribute.md` |
+
+It holds no credential. It tells the agent how to write an article through the
+`cosift_contribute` tool, and to show you the terms before joining and the whole submission
+before sending. It is static text from `onboarding/contribute/BODY.md`, handled like the interview
+files below: a symlink at the path is left alone, a file we did not write is backed up first.
+
+The interview is one file per selected harness, plus one command:
 
 | Harness | File |
 | --- | --- |
@@ -344,10 +372,11 @@ and unreleased products out of it. Plain public words work best.
 sh install.sh --uninstall
 ```
 
-removes the `cosift` entry from every harness config, the interview files, the
+removes the `cosift` entry from every harness config, the contributor skill files, the interview files, the
 `cosift-onboarding` command, the hook and the five permission grants from
-`~/.claude/settings.json`, and the state files. It does **not** delete backups, and it does
-**not** revoke the token server-side.
+`~/.claude/settings.json`, and the state files. It does **not** delete backups, the
+`~/.local/bin/cosift` binary or the CLI session, and it does **not** revoke the token
+server-side.
 
 To do any of it by hand, including restoring a backup:
 [docs/UNINSTALL.md](UNINSTALL.md). To revoke the token:
@@ -358,10 +387,11 @@ To do any of it by hand, including restoring a backup:
 | Claim here | Where to look |
 | --- | --- |
 | the install order, the prompts, the exit codes | `do_install`, `parse_args`, `usage` in `install.sh` |
-| every path written, and the backup of each | `onboarding_path`, `onboarding_install`, `ensure_backup`, `write_state` in `install.sh` |
+| every path written, and the backup of each | `onboarding_path`, `onboarding_install`, `contribute_path`, `contribute_install`, `ensure_backup`, `write_state` in `install.sh` |
+| the CLI download, and what is checked before it is installed | `release_base_check`, `cli_signature_ok`, `cli_install` in `install.sh` |
 | the exact hook entry and the five permission strings | `claude_settings_merge` in `install.sh` — its argument list is the five strings, and the merge is the whole edit |
 | that nothing else in `settings.json` is touched | `claude_settings_usable`, `claude_settings_install`, `claude_settings_remove` |
-| the three network requests, and nothing else | `auth_start`, `auth_verify_loop`, `mcp_initialize` — the only callers of `http_post` |
+| the auth and MCP requests, and nothing else | `auth_start`, `auth_verify_loop`, `mcp_initialize` — the only callers of `http_post`; the release fetches are `release_get` |
 | the token is never put in argv by curl | `mk_header_file`, and `curl -q -K` in `http_post` |
 | what the digest reads and drops | `cmd_digest`, `py_digest`, `awk_digest` in `onboarding/bin/cosift-onboarding` |
 | the exact auto-start text, and when it is silent | `cmd_hook`, and `cmd_status` for the state words |

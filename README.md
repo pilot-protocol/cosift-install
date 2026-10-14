@@ -25,11 +25,15 @@ on the machine), writes the server entry, and verifies that the entry actually w
 it reports success. It also sets up [onboarding](#onboarding-one-step), the one step that
 tells Cosift what you work on.
 
-If the signed Cosift CLI is already on your `PATH`, the installer also connects it
-to the same account. It saves a verified session in
+It also downloads the signed Cosift CLI release for your platform, installs it to
+`~/.local/bin/cosift` and connects it to the same account. The download is checked first: its
+signature against the pinned Cosift release key when `minisign` is installed, and its published
+SHA-256 in every case; without `minisign` the installer says so and relies on the checksum over
+TLS. A failed check installs nothing. The connection saves a verified session in
 `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json`, mode `0600`, without
-printing the token or asking you to copy it from a harness. `--no-cli` skips this;
-`--cli` makes a missing CLI or failed handoff an error. An existing session is
+printing the token or asking you to copy it from a harness. `--no-cli` skips the CLI;
+`--no-cli-download` connects the `cosift` already on your `PATH` instead; `--cli` makes a
+missing CLI or failed handoff an error. Windows is not supported. An existing session is
 never replaced. The web app at [cosift.pilotprotocol.network](https://cosift.pilotprotocol.network)
 uses the same account when you sign in with the same email.
 
@@ -73,7 +77,9 @@ server accepts is reused.
 | the opencode config named above | the `cosift` entry, written by `opencode mcp add` — the script never edits this file when adding |
 | `<each edited file>.cosift-backup-<UTC timestamp>` | a copy of the file as it was before the edit |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what was installed, mode `0600` |
+| `~/.local/bin/cosift` | the Cosift CLI release for your platform, verified before it is installed, mode `0755` |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json` | verified CLI token, origin and expiry, mode `0600`, when a compatible CLI is available |
+| `~/.claude/skills/cosift-contribute/SKILL.md`, `${COSIFT_CODEX_SKILLS_DIR:-~/.agents/skills}/cosift-contribute/SKILL.md` and `${XDG_CONFIG_HOME:-~/.config}/opencode/commands/cosift-contribute.md` | the contributor skill for each selected harness, mode `0644`, no credential; `--no-contribute` skips it |
 | one file per selected harness, named under [onboarding](#onboarding-one-step) | the interview itself, mode `0644` — only if you agree to it |
 | `~/.local/bin/cosift-onboarding` | the local command the interview uses, mode `0755` — same condition |
 | `~/.claude/settings.json` | one `SessionStart` hook and five permission grants, so the interview can start and run without prompting you — same condition, Claude Code only |
@@ -144,8 +150,8 @@ The installer configures agents; the [web app](https://cosift.pilotprotocol.netw
 provides Search, Answer, Research, saved requests, followed topics, contributions
 and credits. Sign in there with the email used during installation.
 
-Install the signed v0.2.7 binary for your platform using the
-[CLI download and verification instructions](docs/CLI-INSTALL.md), then rerun:
+The installer fetches the CLI itself. To install it by hand instead, follow the
+[CLI download and verification instructions](docs/CLI-INSTALL.md), then run:
 
 ```sh
 sh install.sh --cli
@@ -157,8 +163,9 @@ cosift contribute -credits
 The CLI discovers only the session file written by this installer and uses its
 recorded origin. Explicit credentials or `-session-file` take precedence;
 `-server` cannot send that session to another origin. `-guest` ignores it.
-The installer does not download or overwrite a binary. A missing or unsupported
-CLI leaves the agent install usable and prints the signed-release link.
+A missing, unreachable or unsupported CLI leaves the agent install usable and prints the
+signed-release link; a CLI that fails its signature or checksum is not installed, and a
+`cosift` already in `~/.local/bin` is kept.
 
 An existing CLI session is left unchanged, including with `--new-account`.
 To switch, run `cosift logout` first and rerun the installer. Logout revokes the

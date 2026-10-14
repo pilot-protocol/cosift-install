@@ -1,5 +1,8 @@
 # Install the signed Cosift CLI
 
+The agent installer downloads and verifies this CLI for you (`install.sh`, without
+`--no-cli`). These are the manual steps, for a pinned version or an offline machine.
+
 Cosift CLI v0.2.7 connects to the same account as the agent installer and web app.
 Use the official [v0.2.7 release](https://github.com/pilot-protocol/cosift/releases/tag/v0.2.7).
 Each binary has a SHA-256 checksum and a minisign signature. The release also
