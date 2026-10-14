@@ -15,6 +15,8 @@ END = "# <<< END EMBEDDED ONBOARDING PAYLOAD"
 BODY_EOF = "COSIFT_ONBOARDING_BODY_EOF"
 PREFIX_EOF = "COSIFT_ONBOARDING_PREFIX_EOF"
 BIN_EOF = "COSIFT_ONBOARDING_BIN_EOF"
+CONTRIBUTE_BODY_EOF = "COSIFT_CONTRIBUTE_BODY_EOF"
+CONTRIBUTE_PREFIX_EOF = "COSIFT_CONTRIBUTE_PREFIX_EOF"
 
 SHIPPED = ("claude", "codex", "opencode")
 
@@ -36,27 +38,13 @@ def heredoc(payload: str, delimiter: str, indent: str = "") -> list[str]:
     return [f"{indent}cat <<'{delimiter}'", payload + delimiter]
 
 
-def build_payload(root: Path) -> str:
-    onb = root / "onboarding"
-    manifest = json.loads((onb / "generated" / "MANIFEST.json").read_text(encoding="utf-8"))
+def compose_functions(
+    onb: Path, manifest: dict, body: str, body_fn: str, prefix_fn: str, body_eof: str, prefix_eof: str
+) -> list[str]:
     by_harness = {h["harness"]: h for h in manifest["harnesses"]}
-
-    body = (onb / "interview" / "BODY.md").read_text(encoding="utf-8")
-    command = (onb / "bin" / "cosift-onboarding").read_text(encoding="utf-8")
-
-    out = [
-        BEGIN,
-        "#",
-        "# The interview artifact, carried in the script so that `curl | sh` installs it with",
-        "# no second fetch.  Rebuild with tools/embed-onboarding.py after any change under",
-        "# onboarding/.  Composed per harness, these reproduce onboarding/generated/ byte for byte.",
-        "",
-        f"ONBOARDING_VERSION=\"{manifest['version']}\"",
-        "",
-        "onboarding_body() {",
-    ]
-    out += heredoc(body, BODY_EOF, "\t")
-    out += ["}", "", "onboarding_prefix() {", '\tcase "$1" in']
+    out = [f"{body_fn}() {{"]
+    out += heredoc(body, body_eof, "\t")
+    out += ["}", "", f"{prefix_fn}() {{", '\tcase "$1" in']
     for harness in SHIPPED:
         entry = by_harness[harness]
         # prefix_bytes counts bytes, so the split happens before decoding.
@@ -66,9 +54,48 @@ def build_payload(root: Path) -> str:
         if rest != body:
             raise EmbedError(f"{entry['generated_path']} is not prefix + BODY.md")
         out.append(f"\t{harness})")
-        out += heredoc(prefix, PREFIX_EOF, "\t\t")
+        out += heredoc(prefix, prefix_eof, "\t\t")
         out.append("\t\t;;")
-    out += ["\t*) return 1 ;;", "\tesac", "}", "", "onboarding_cmd_source() {"]
+    out += ["\t*) return 1 ;;", "\tesac", "}", ""]
+    return out
+
+
+def build_payload(root: Path) -> str:
+    onb = root / "onboarding"
+    manifest = json.loads((onb / "generated" / "MANIFEST.json").read_text(encoding="utf-8"))
+    contribute = json.loads(
+        (onb / "contribute" / "generated" / "MANIFEST.json").read_text(encoding="utf-8")
+    )
+
+    body = (onb / "interview" / "BODY.md").read_text(encoding="utf-8")
+    contribute_body = (onb / "contribute" / "BODY.md").read_text(encoding="utf-8")
+    command = (onb / "bin" / "cosift-onboarding").read_text(encoding="utf-8")
+
+    out = [
+        BEGIN,
+        "#",
+        "# The interview and contributor artifacts, carried in the script so that `curl | sh` installs",
+        "# them with no second fetch.  Rebuild with tools/embed-onboarding.py after any change under",
+        "# onboarding/.  Composed per harness, these reproduce onboarding/generated/ and",
+        "# onboarding/contribute/generated/ byte for byte.",
+        "",
+        f"ONBOARDING_VERSION=\"{manifest['version']}\"",
+        f"CONTRIBUTE_VERSION=\"{contribute['version']}\"",
+        "",
+    ]
+    out += compose_functions(
+        onb, manifest, body, "onboarding_body", "onboarding_prefix", BODY_EOF, PREFIX_EOF
+    )
+    out += compose_functions(
+        onb,
+        contribute,
+        contribute_body,
+        "contribute_body",
+        "contribute_prefix",
+        CONTRIBUTE_BODY_EOF,
+        CONTRIBUTE_PREFIX_EOF,
+    )
+    out += ["onboarding_cmd_source() {"]
     out += heredoc(command, BIN_EOF, "\t")
     out += ["}", "", END]
     return "\n".join(out) + "\n"
