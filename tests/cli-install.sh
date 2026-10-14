@@ -102,12 +102,13 @@ class ReleaseServer:
 
 class CLIInstallCase(unittest.TestCase):
     OS, ARCH, ASSET = "Linux", "x86_64", "cosift-linux-amd64"
+    HOME_NAME = "home"
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.home = self.root / "home"
+        self.home = self.root / self.HOME_NAME
         self.home.mkdir()
         self.release = self.root / "release"
         self.release.mkdir()
@@ -438,7 +439,7 @@ class OnboardedState:
     SEP = ": "
 
     def state_text(self):
-        return (self.home / "config/cosift/state.json").read_text()
+        return (self.home / "config/cosift/state.json").read_text(encoding="utf-8")
 
     def complete(self, *args):
         env = dict(self.env, FAKE_OS=self.OS, FAKE_ARCH=self.ARCH)
@@ -495,6 +496,15 @@ class OnboardedWithPython(OnboardedState, CLIInstallCase):
     def test_the_interview_leaves_state_pretty_printed(self):
         self.install_and_complete()
         self.assertIn('\n  "onboarded": true', self.state_text())
+
+
+class OnboardedWithPythonUnderNonAsciiHome(OnboardedWithPython):
+    HOME_NAME = "h\u00f6m\u00e9-\u65e5\u672c"
+
+    def test_the_interview_keeps_the_home_path_unescaped(self):
+        self.install_and_complete()
+        self.assertIn(self.HOME_NAME, self.state_text())
+        self.assertNotIn("\\u", self.state_text())
 
 
 class OnboardedWithoutPython(OnboardedState, CLIInstallCase):
