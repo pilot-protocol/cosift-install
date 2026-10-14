@@ -44,9 +44,11 @@
 #
 # HOW TO UNDO
 #   Re-run with --uninstall: the cosift entry is removed from each harness, the
-#   contributor and interview files above are removed, and the state file is deleted.  Backups, the
-#   cosift binary and the CLI session are left in place.  Uninstalling does NOT revoke the token server-side - revoke it
-#   from your Cosift account.
+#   contributor and interview files above are removed, and the state file is deleted.
+#   The cosift binary is removed only if this installer placed it and it is unchanged
+#   (a backup of a binary it replaced is restored); otherwise it is kept.  Backups and
+#   the CLI session are left in place.  Uninstalling does NOT revoke the token
+#   server-side - revoke it from your Cosift account.
 #
 # USAGE
 #   curl -fsSL <installer-url> | sh
@@ -2593,15 +2595,46 @@ write_state() {
 	# Only the interview sets this, and re-running the installer is not un-completing it.
 	_done=$(state_flag onboarded)
 	case "$_done" in true) ;; *) _done=false ;; esac
+	cli_record
 	_tmp="$TMPD/state.json"
-	printf '{"version":"%s","account_uid":"%s","harnesses_configured":[%s],"onboarded":%s,"installed_at":"%s","onboarding_installed":[%s],"onboarding_cmd":"%s"}\n' \
-		"$VERSION" "$ACCOUNT_UID" "$_arr" "$_done" "$(now_rfc3339)" "$_onb" "$ONBOARDED_CMD" >"$_tmp"
+	printf '{"version":"%s","account_uid":"%s","harnesses_configured":[%s],"onboarded":%s,"installed_at":"%s","onboarding_installed":[%s],"onboarding_cmd":"%s","cli_path":"%s","cli_sha256":"%s","cli_backup":"%s"}\n' \
+		"$VERSION" "$ACCOUNT_UID" "$_arr" "$_done" "$(now_rfc3339)" "$_onb" "$ONBOARDED_CMD" \
+		"$REC_PATH" "$REC_SHA" "$REC_BAK" >"$_tmp"
 	if ! cp "$_tmp" "$STATE_FILE"; then
 		err "could not write $STATE_FILE"
 		return 1
 	fi
 	chmod 600 "$STATE_FILE" 2>/dev/null
 	return 0
+}
+
+# A string value from state.json; whitespace is kept, unlike the list readers below.
+state_str() {
+	if [ ! -f "$STATE_FILE" ]; then return 1; fi
+	sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$STATE_FILE" | head -1
+}
+
+# REC_* is the binary record for state.json: this run's install, else the earlier record.
+# A value that JSON could not carry verbatim is dropped, so uninstall keeps the binary.
+cli_record() {
+	REC_PATH=""
+	REC_SHA=""
+	REC_BAK=""
+	if [ "$CLI_INSTALLED" -eq 1 ]; then
+		REC_PATH=$CLI_BIN
+		REC_SHA=$CLI_REC_SHA
+		REC_BAK=$CLI_REC_BAK
+	else
+		REC_PATH=$(state_str cli_path)
+		REC_SHA=$(state_str cli_sha256)
+		REC_BAK=$(state_str cli_backup)
+	fi
+	case "$REC_PATH$REC_SHA" in
+	*[\"\\]*) REC_PATH="" REC_SHA="" REC_BAK="" ;;
+	esac
+	case "$REC_BAK" in
+	*[\"\\]*) REC_BAK="" ;;
+	esac
 }
 
 state_harnesses() {
@@ -4528,6 +4561,8 @@ final_verify() {
 # or 2 when the download failed verification and nothing was installed.
 CLI_PATH=""
 CLI_INSTALLED=0
+CLI_REC_SHA=""
+CLI_REC_BAK=""
 
 cli_asset() {
 	case "$(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)" in
@@ -4676,11 +4711,56 @@ cli_install() {
 		warn "Install minisign and re-run for a signature check."
 	fi
 	if ! onboarding_mkdir "$LOCAL_BIN"; then return 1; fi
+	_own=0
+	_osha=$(state_str cli_sha256)
+	if [ -f "$CLI_BIN" ] && [ -n "$_osha" ] && [ "$(state_str cli_path)" = "$CLI_BIN" ] &&
+		[ "$(sha256_file "$CLI_BIN")" = "$_osha" ]; then
+		_own=1
+	fi
+	_obak=$(state_str cli_backup)
 	if ! backup_file "$CLI_BIN"; then return 1; fi
+	if [ "$_own" -eq 0 ]; then _obak=$BACKUP_PATH; fi
 	if ! onboarding_place "$_cdir/$_asset" "$CLI_BIN" 755; then return 1; fi
+	CLI_REC_SHA=$_got
+	CLI_REC_BAK=$_obak
 	CLI_INSTALLED=1
 	CLI_PATH=$CLI_BIN
 	ok "installed $(dim "$CLI_BIN")"
+	return 0
+}
+
+# Remove the binary this installer placed, if it is still exactly that file.
+cli_uninstall() {
+	_up=$(state_str cli_path)
+	if [ -z "$_up" ]; then return 0; fi
+	if [ "$_up" != "$CLI_BIN" ]; then
+		say "    kept $(dim "$_up"): it is not this account's $CLI_BIN"
+		return 0
+	fi
+	if [ -L "$_up" ]; then
+		say "    kept $(dim "$_up"): it is now a symlink, not the file we installed"
+		return 0
+	fi
+	if [ ! -f "$_up" ]; then return 0; fi
+	_us=$(state_str cli_sha256)
+	if [ -z "$_us" ] || [ "$(sha256_file "$_up" 2>/dev/null)" != "$_us" ]; then
+		say "    kept $(dim "$_up"): it is no longer the binary we installed"
+		return 0
+	fi
+	if ! rm -f "$_up"; then
+		warn "could not remove $_up"
+		return 0
+	fi
+	ok "removed $(dim "$_up")"
+	_ub=$(state_str cli_backup)
+	case "$_ub" in
+	"$LOCAL_BIN"/cosift.cosift-backup-*)
+		if [ -f "$_ub" ] && [ ! -L "$_ub" ] && cp "$_ub" "$_up"; then
+			chmod 755 "$_up" 2>/dev/null
+			ok "restored the binary it replaced, from $(dim "$_ub")"
+		fi
+		;;
+	esac
 	return 0
 }
 
@@ -5091,6 +5171,7 @@ do_uninstall() {
 	fi
 	onboarding_uninstall "$_onb"
 	contribute_uninstall
+	cli_uninstall
 	if [ -z "$_targets" ]; then
 		say "Nothing to remove: no cosift entry found in any supported harness."
 		if [ -f "$STATE_FILE" ]; then

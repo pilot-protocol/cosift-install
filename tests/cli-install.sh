@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -23,7 +24,7 @@ VERSION = "v9.9.9"
 REAL_CURL = shutil.which("curl")
 MINISIGN = shutil.which("minisign")
 TOOLS = (
-    "awk basename cat chmod cp curl cut date dirname grep head id ls mkdir mktemp mv od "
+    "awk basename cat chmod cmp cp curl cut date dirname grep head id ls mkdir mktemp mv od "
     "python3 rm rmdir sed sh sha256sum shasum sort tail tr wc"
 ).split()
 
@@ -257,6 +258,140 @@ class FreshInstall(CLIInstallCase):
             self.assertEqual(result.returncode, 5, result.stderr)
             self.assertIn("malformed", result.stderr)
             self.assertFalse(self.installed.exists())
+
+
+class Uninstall(CLIInstallCase):
+    def installed_state(self):
+        return json.loads((self.home / "config/cosift/state.json").read_text())
+
+    def install_and_uninstall(self):
+        self.publish()
+        self.without_minisign()
+        self.assertEqual(self.run_install().returncode, 0)
+        return self.run_uninstall()
+
+    def test_the_contributor_skill_is_installed_and_removed(self):
+        self.publish()
+        self.without_minisign()
+        result = self.run_install()
+        skill = self.home / ".agents/skills/cosift-contribute/SKILL.md"
+        self.assertTrue(skill.is_file(), result.stdout)
+        self.assertIn("contributor skill: wrote", result.stdout)
+        self.assertNotIn("does not match", result.stderr)
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertFalse(skill.exists())
+
+    def test_install_records_the_binary_path_and_hash(self):
+        data = self.publish()
+        self.without_minisign()
+        self.assertEqual(self.run_install().returncode, 0)
+        state = self.installed_state()
+        self.assertEqual(state["cli_path"], str(self.installed))
+        self.assertEqual(state["cli_sha256"], sha256(data))
+        self.assertEqual(state["cli_backup"], "")
+
+    def test_an_unchanged_binary_is_removed(self):
+        result = self.install_and_uninstall()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.installed.exists())
+        self.assertIn("removed", result.stdout)
+        self.assertTrue(self.session.exists())
+
+    def test_a_rerun_keeps_the_record(self):
+        self.publish()
+        self.without_minisign()
+        self.assertEqual(self.run_install().returncode, 0)
+        before = self.installed_state()
+        self.assertEqual(self.run_install().returncode, 0)
+        after = self.installed_state()
+        self.assertEqual((after["cli_path"], after["cli_sha256"]), (before["cli_path"], before["cli_sha256"]))
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertFalse(self.installed.exists())
+
+    def test_a_modified_binary_is_kept_with_a_notice(self):
+        self.publish()
+        self.without_minisign()
+        self.assertEqual(self.run_install().returncode, 0)
+        self.installed.write_text(FAKE_CLI + "# edited\n")
+        result = self.run_uninstall()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed.read_text(), FAKE_CLI + "# edited\n")
+        self.assertIn("kept", result.stdout)
+        self.assertIn("no longer the binary we installed", result.stdout)
+
+    def test_a_symlink_in_place_of_the_binary_is_kept(self):
+        self.publish()
+        self.without_minisign()
+        self.assertEqual(self.run_install().returncode, 0)
+        target = self.root / "elsewhere-cosift"
+        target.write_bytes(self.installed.read_bytes())
+        self.installed.unlink()
+        self.installed.symlink_to(target)
+        result = self.run_uninstall()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.installed.is_symlink())
+        self.assertTrue(target.exists())
+        self.assertIn("symlink", result.stdout)
+
+    def test_a_binary_we_did_not_place_is_not_removed(self):
+        data = self.publish()
+        self.without_minisign()
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_bytes(data)
+        self.installed.chmod(0o755)
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertEqual(self.installed_state()["cli_path"], "")
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertEqual(self.installed.read_bytes(), data)
+
+    def test_the_backup_of_a_replaced_binary_is_restored(self):
+        old = b"#!/bin/sh\necho old\n"
+        self.publish()
+        self.without_minisign()
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_bytes(old)
+        self.installed.chmod(0o755)
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertNotEqual(self.installed.read_bytes(), old)
+        result = self.run_uninstall()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed.read_bytes(), old)
+        self.assertEqual(stat.S_IMODE(self.installed.stat().st_mode), 0o755)
+
+    def test_a_missing_backup_just_removes_the_binary(self):
+        self.publish()
+        self.without_minisign()
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_bytes(b"#!/bin/sh\necho old\n")
+        self.assertEqual(self.run_install().returncode, 0)
+        for backup in self.installed.parent.glob("cosift.cosift-backup-*"):
+            backup.unlink()
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertFalse(self.installed.exists())
+
+    def test_a_second_replacement_still_restores_the_original(self):
+        old = b"#!/bin/sh\necho old\n"
+        self.publish()
+        self.without_minisign()
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_bytes(old)
+        self.assertEqual(self.run_install().returncode, 0)
+        self.publish(payload=FAKE_CLI + "# v2\n")
+        self.assertEqual(self.run_install().returncode, 0)
+        self.assertEqual(self.installed.read_text(), FAKE_CLI + "# v2\n")
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertEqual(self.installed.read_bytes(), old)
+
+    def test_a_state_path_elsewhere_is_not_followed(self):
+        self.publish()
+        self.without_minisign()
+        self.assertEqual(self.run_install().returncode, 0)
+        other = self.root / "precious"
+        other.write_bytes(self.installed.read_bytes())
+        state_file = self.home / "config/cosift/state.json"
+        state_file.write_text(state_file.read_text().replace(str(self.installed), str(other)))
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertTrue(other.exists())
 
 
 class ReleaseBase(CLIInstallCase):
@@ -676,6 +811,49 @@ class PinnedKey(CLIInstallCase):
         result = self.run_install(base="https://release.example.invalid")
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertFalse(self.log.exists())
+
+
+class DocAnchors(unittest.TestCase):
+    ROOT = INSTALLER.parent
+    LINK = re.compile(r"\]\(([^)#\s]*)#([^)\s]+)\)")
+
+    @staticmethod
+    def slug(heading):
+        heading = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", heading)
+        heading = heading.replace("`", "").replace("*", "").strip().lower()
+        return re.sub(r"[^\w\- ]", "", heading).replace(" ", "-")
+
+    def anchors(self, path):
+        seen, found, fenced = {}, set(), False
+        for line in path.read_text().splitlines():
+            if line.startswith("```"):
+                fenced = not fenced
+            elif not fenced and (heading := re.match(r"#{1,6}\s+(.*?)\s*#*$", line)):
+                base = self.slug(heading.group(1))
+                count = seen.get(base, 0)
+                seen[base] = count + 1
+                found.add(base if count == 0 else f"{base}-{count}")
+        return found
+
+    def test_every_anchor_in_the_docs_resolves(self):
+        docs = [self.ROOT / "README.md", *sorted((self.ROOT / "docs").glob("*.md"))]
+        checked = 0
+        for doc in docs:
+            fenced = False
+            for number, line in enumerate(doc.read_text().splitlines(), 1):
+                if line.startswith("```"):
+                    fenced = not fenced
+                if fenced:
+                    continue
+                for target, anchor in self.LINK.findall(line):
+                    if target.startswith(("http://", "https://")):
+                        continue
+                    where = doc if not target else (doc.parent / target).resolve()
+                    with self.subTest(link=f"{doc.name}:{number} {target}#{anchor}"):
+                        self.assertTrue(where.is_file(), f"{target} is not a file")
+                        self.assertIn(anchor, self.anchors(where))
+                    checked += 1
+        self.assertGreater(checked, 10)
 
 
 unittest.main()

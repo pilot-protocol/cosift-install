@@ -274,6 +274,9 @@ def state_check(path, csv_harnesses, version_hint, csv_onboarding="?"):
         "installed_at",
         "onboarding_installed",
         "onboarding_cmd",
+        "cli_path",
+        "cli_sha256",
+        "cli_backup",
     }
     got_keys = set(doc)
     if got_keys != want_keys:
@@ -318,6 +321,9 @@ def state_check(path, csv_harnesses, version_hint, csv_onboarding="?"):
         probs.append("onboarding_cmd must be a string")
     elif oi and not oc.endswith("/.local/bin/cosift-onboarding"):
         probs.append("onboarding_cmd %r is not the documented command path" % (oc,))
+    for key in ("cli_path", "cli_sha256", "cli_backup"):
+        if not isinstance(doc.get(key), str):
+            probs.append("%s must be a string" % key)
     ia = doc.get("installed_at")
     if not isinstance(ia, str) or not re.match(
         r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$", ia
