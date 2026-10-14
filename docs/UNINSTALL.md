@@ -29,9 +29,15 @@ What it does:
 5. Removes `~/.local/bin/cosift-onboarding`, but only if that file is byte-identical to the one
    it installed. If it is not — an older release's copy, or one you edited — it says so and
    leaves the file; remove it by hand.
-6. Removes the entries it added to `~/.claude/settings.json`: the `SessionStart` hook and the
+6. Removes `~/.local/bin/cosift` when the installer placed it (its path and SHA-256 are in
+   `state.json`), the file at that path is not a symlink and its hash is still the recorded one.
+   If you replaced or edited it, or it is now a symlink, it says so and keeps it. When the
+   install had replaced a `cosift` of yours, that copy is restored from its
+   `.cosift-backup-*` file if the backup still exists. A `cosift` you installed yourself, or
+   one that was already current, is never removed.
+7. Removes the entries it added to `~/.claude/settings.json`: the `SessionStart` hook and the
    five permission grants. Nothing else in that file is touched.
-7. Removes `state.json`, and `onboarding.json` beside it.
+8. Removes `state.json`, and `onboarding.json` beside it.
 
 It does not trust the state file for steps 3 and 4: it checks all three paths of each directly and
 removes whatever it recognises as ours. A file left behind by an earlier run is still found,
@@ -49,10 +55,10 @@ backups below still contain the token.
 
 There is no uninstall preview: `--dry-run` with `--uninstall` is a usage error and exits `2`.
 
-The Cosift CLI binary (`~/.local/bin/cosift`) and `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json`
-are left available for independent CLI use. Run `cosift logout` to revoke and
-remove that session. This also invalidates the same token in any remaining
-agent configuration; it does not revoke other tokens belonging to the account.
+The CLI's own session, `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json`, and any
+other CLI configuration are left alone, so a `cosift` you keep stays signed in. Run
+`cosift logout` to revoke and remove that session. This also invalidates the same token in any
+remaining agent configuration; it does not revoke other tokens belonging to the account.
 
 ## Manual removal
 
@@ -187,6 +193,19 @@ opencode mcp list      # should exit 0 and no longer list cosift
 ```
 
 If that command fails after your edit, restore your backup (below) and try again.
+
+## Removing the CLI binary
+
+Only if you want it gone; `--uninstall` has already removed it when it was the unchanged copy
+the installer placed. If a `.cosift-backup-*` file sits beside it, that is the `cosift` the
+installer replaced.
+
+```sh
+rm -f ~/.local/bin/cosift
+ls ~/.local/bin/cosift.cosift-backup-* 2>/dev/null
+```
+
+The CLI session is separate: `cosift logout` revokes and removes it.
 
 ## Removing the contributor skill
 
@@ -380,6 +399,7 @@ ls -la ~/.claude.json.cosift-backup-* \
        ~/.agents/skills/cosift-onboarding/SKILL.md.cosift-backup-* \
        ~/.config/opencode/commands/cosift-onboarding.md.cosift-backup-* \
        ~/.local/bin/cosift-onboarding.cosift-backup-* \
+       ~/.local/bin/cosift.cosift-backup-* \
        ~/.config/cosift/state.json.cosift-backup-* \
        ~/.config/cosift/onboarding.json.cosift-backup-* 2>/dev/null
 ```

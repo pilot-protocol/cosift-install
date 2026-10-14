@@ -93,7 +93,10 @@ the edit. Backups are never deleted, not even by `--uninstall`. See
 recovered rather than minted), which harnesses were configured, an `onboarded` flag, the
 install timestamp, which harnesses received the interview (`onboarding_installed`) and the
 path of the local command (`onboarding_cmd`). Those last two are always written: decline the
-interview and they are `[]` and `""`. It does not contain the token.
+interview and they are `[]` and `""`. It also records the path, SHA-256 and backup (if it
+replaced a file) of the `cosift` binary when the installer placed it (`cli_path`, `cli_sha256`,
+`cli_backup`; empty strings otherwise), which is how `--uninstall` knows the binary is its own.
+It does not contain the token.
 
 If an existing config cannot be modified safely — for example your `config.toml` already
 declares an `[mcp_servers.cosift]` table that the installer did not write — the script
@@ -102,8 +105,13 @@ refuses and exits `5` rather than overwriting it.
 ### Network
 
 The script contacts the Cosift auth service (`COSIFT_AUTH_BASE`) and the
-Cosift MCP endpoint (`COSIFT_MCP_URL`), both shown in `--help`. When connecting an
-installed CLI, it also verifies the token at the web origin (`COSIFT_COMMUNITY_URL`).
+Cosift MCP endpoint (`COSIFT_MCP_URL`), both shown in `--help`. Unless you pass `--no-cli` or
+`--no-cli-download`, it also downloads the signed CLI from the release host
+(`COSIFT_RELEASE_BASE`, by default the GitHub release downloads at
+`https://github.com/pilot-protocol/cosift/releases/latest/download`, which GitHub serves from its own asset hosts):
+the binary for your platform, its `.sha256` and, when `minisign` is installed, its `.minisig`.
+HTTPS only (plain http is accepted for localhost), with no credential and no cookies sent.
+When connecting the CLI, it verifies the token at the web origin (`COSIFT_COMMUNITY_URL`).
 This release uses the production Cloud Run origins directly:
 `https://cosift-auth-udik5erlkq-uw.a.run.app` and
 `https://cosift-mcp-udik5erlkq-uw.a.run.app/v1/mcp`. The stable custom auth/MCP
@@ -170,8 +178,8 @@ signed-release link; a CLI that fails its signature or checksum is not installed
 An existing CLI session is left unchanged, including with `--new-account`.
 To switch, run `cosift logout` first and rerun the installer. Logout revokes the
 shared token in any agent still using it as well. `--uninstall` removes agent
-integration but leaves this independently usable CLI session; use `cosift logout`
-to revoke and remove it.
+integration but leaves this independently usable CLI session and any other CLI configuration
+in place; use `cosift logout` to revoke and remove the session.
 
 ## Onboarding: one step
 
@@ -312,8 +320,10 @@ install.sh [OPTIONS]
   --yes              accept all detected harnesses without prompting
   --onboarding       install the onboarding interview without asking
   --no-onboarding    do not install the onboarding interview
-  --cli              require connecting an already installed Cosift CLI
-  --no-cli           skip connecting an installed CLI
+  --no-contribute    do not install the contributor skill
+  --cli              require the Cosift CLI to be installed and connected; a failure is an error
+  --no-cli           neither download nor connect the Cosift CLI
+  --no-cli-download  connect the cosift already on PATH instead of downloading the signed release
   --help             print usage to stdout and exit 0
   --version          print the version string to stdout and exit 0
 ```
@@ -330,8 +340,10 @@ writes nothing at all — no backups, no state directory, no temp files in your 
 — and it never runs the email flow. It may use a credential already on the machine to perform
 one read-only check against the MCP endpoint, but it will not mint a new one.
 
-`--uninstall` removes the onboarding files and the `settings.json` entries as well as the
-server entries. It is documented in [docs/UNINSTALL.md](docs/UNINSTALL.md).
+`--uninstall` removes the onboarding files, the contributor skill and the `settings.json` entries
+as well as the server entries. It removes `~/.local/bin/cosift` only if the installer placed it
+and it is unchanged (restoring the binary it replaced, if any); otherwise it keeps it and says so.
+The CLI session is left alone. It is documented in [docs/UNINSTALL.md](docs/UNINSTALL.md).
 
 ## Exit codes
 
@@ -341,7 +353,7 @@ server entries. It is documented in [docs/UNINSTALL.md](docs/UNINSTALL.md).
 | `2` | usage error (unknown option, or flags that cannot be combined) |
 | `3` | preflight failure — `curl` is missing, `$HOME` is not writable, or no supported harness was found |
 | `4` | authentication failure — no usable credential could be obtained |
-| `5` | harness write failure — a config was refused, a write failed, or the post-write re-read did not find our entry |
+| `5` | harness write failure — a config was refused, a write failed, the post-write re-read did not find our entry, or the CLI could not be downloaded and verified |
 | `6` | interaction was required but `/dev/tty` could not be opened for reading |
 
 Onboarding never changes the exit code. If any part of it cannot be installed the installer
@@ -354,6 +366,7 @@ warns and carries on, and nothing that was already written is rolled back.
 | `COSIFT_AUTH_BASE` | override the auth service base URL used for the email code flow |
 | `COSIFT_MCP_URL` | override the MCP server URL that gets written into the harness config |
 | `COSIFT_COMMUNITY_URL` | web and CLI origin; defaults to `https://cosift.pilotprotocol.network` |
+| `COSIFT_RELEASE_BASE` | where the signed CLI release is downloaded from; HTTPS except localhost; defaults to `https://github.com/pilot-protocol/cosift/releases/latest/download` |
 | `COSIFT_EXTRA_HEADER` | one additional header in `Name: value` form, sent on every auth/MCP request and written into the harness config next to `Authorization`; it is not forwarded to the community CLI |
 | `COSIFT_CODEX_SKILLS_DIR` | the skills root the Codex onboarding file is written under; defaults to `~/.agents/skills`. It has no effect on the MCP config, and `CODEX_HOME` has no effect on it |
 

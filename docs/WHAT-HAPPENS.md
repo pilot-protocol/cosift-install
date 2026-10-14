@@ -28,7 +28,7 @@ In order, the script:
    to the Cosift MCP endpoint; the first the server accepts is reused. If none is, it asks for
    your email address and a six-digit code.
 5. Writes the `cosift` MCP server entry into each selected harness config, and next to each
-   one the contributor skill described in [section 2](#2-what-it-installs-for-the-interview)
+   one the contributor skill described in [section 2](#2-what-it-installs-for-the-interview-and-the-contributor-skill)
    (`--no-contribute` skips the skill).
 6. Installs onboarding, unless you declined it: one file per harness, the local command, and
    on Claude Code the hook and permission grants in `~/.claude/settings.json`.
@@ -59,7 +59,7 @@ call with a credential already on the machine, to say whether that one would be 
 | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | same |
 | `$XDG_CONFIG_HOME/opencode/opencode.json[c]`, falling back to `~/.config/opencode/opencode.json[c]` | same |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what a previous run configured |
-| the interview and contributor-skill paths in [section 2](#2-what-it-installs-for-the-interview) | whether a file is already there, and whether it is byte-identical to ours |
+| the interview and contributor-skill paths in [section 2](#2-what-it-installs-for-the-interview-and-the-contributor-skill) | whether a file is already there, and whether it is byte-identical to ours |
 | `~/.local/bin/cosift` | whether the installed CLI already matches the release checksum |
 
 ### Files it writes
@@ -78,7 +78,7 @@ call with a credential already on the machine, to say whether that one would be 
 | `${XDG_CONFIG_HOME:-~/.config}/opencode/commands/cosift-contribute.md` | the contributor skill, on opencode | `0644` |
 | `~/.local/bin/cosift` | the verified Cosift CLI release binary | `0755` |
 | `~/.claude/settings.json` | the hook and the permission grants in [section 3](#3-the-change-to-claudesettingsjson) | preserved; `0600` if the installer created the file |
-| `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what was installed | `0600` |
+| `${XDG_CONFIG_HOME:-~/.config}/cosift/state.json` | what was installed, including the path, SHA-256 and backup of `~/.local/bin/cosift` when this run placed it | `0600` |
 | `${XDG_CONFIG_HOME:-~/.config}/cosift/community-session.json` | token, origin and expiry for the installed CLI; only if this file does not already exist | `0600` |
 | `<each edited file>.cosift-backup-<UTC timestamp>` | a copy of the file as it was before the edit | `0600` |
 | a directory under `$TMPDIR` | request bodies and curl header files, deleted on exit | `0700` |
@@ -374,9 +374,11 @@ sh install.sh --uninstall
 
 removes the `cosift` entry from every harness config, the contributor skill files, the interview files, the
 `cosift-onboarding` command, the hook and the five permission grants from
-`~/.claude/settings.json`, and the state files. It does **not** delete backups, the
-`~/.local/bin/cosift` binary or the CLI session, and it does **not** revoke the token
-server-side.
+`~/.claude/settings.json`, and the state files. It removes `~/.local/bin/cosift` only if
+this installer placed it and it still has the SHA-256 recorded in `state.json` and is not a
+symlink (restoring the binary it replaced, when that backup still exists); otherwise it keeps
+the binary and says so. It does **not** delete backups or the CLI session, and it does **not**
+revoke the token server-side.
 
 To do any of it by hand, including restoring a backup:
 [docs/UNINSTALL.md](UNINSTALL.md). To revoke the token:
