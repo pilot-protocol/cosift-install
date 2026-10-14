@@ -395,6 +395,43 @@ class Uninstall(CLIInstallCase):
         self.assertEqual(self.run_uninstall().returncode, 0)
         self.assertTrue(other.exists())
 
+    def replaced_install(self):
+        self.publish()
+        self.without_minisign()
+        self.installed.parent.mkdir(parents=True)
+        self.installed.write_bytes(b"#!/bin/sh\necho old\n")
+        self.assertEqual(self.run_install().returncode, 0)
+        (backup,) = self.installed.parent.glob("cosift.cosift-backup-*")
+        return backup
+
+    def retarget_backup(self, backup, target):
+        state_file = self.home / "config/cosift/state.json"
+        state_file.write_text(state_file.read_text().replace(str(backup), str(target)))
+
+    def assert_tampered_backup_not_restored(self, target):
+        backup = self.replaced_install()
+        target.write_bytes(b"not ours\n")
+        self.retarget_backup(backup, target)
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertFalse(self.installed.exists())
+        self.assertEqual(target.read_bytes(), b"not ours\n")
+
+    def test_a_backup_path_beside_the_binary_with_another_name_is_not_restored(self):
+        self.assert_tampered_backup_not_restored(self.installed.parent / "precious")
+
+    def test_a_backup_path_elsewhere_is_not_restored(self):
+        self.assert_tampered_backup_not_restored(self.root / "precious")
+
+    def test_a_symlinked_backup_is_not_restored(self):
+        backup = self.replaced_install()
+        precious = self.root / "precious"
+        precious.write_bytes(b"not ours\n")
+        backup.unlink()
+        backup.symlink_to(precious)
+        self.assertEqual(self.run_uninstall().returncode, 0)
+        self.assertFalse(self.installed.exists())
+        self.assertEqual(precious.read_bytes(), b"not ours\n")
+
 
 class OnboardedState:
     ONBOARDING = "--onboarding"
