@@ -1,0 +1,18 @@
+{
+  "harness": "opencode",
+  "output_relpath": "cosift-contribute.md",
+  "install_path": "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands/cosift-contribute.md",
+  "owned_dir": null,
+  "shared_parent": "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands",
+  "invocation": "/cosift-contribute",
+  "verified": true,
+  "allowed_frontmatter_keys": [
+    "description"
+  ],
+  "frontmatter": [
+    [
+      "description",
+      "Write an article for the Cosift wiki, or improve one, with the cosift_contribute tool. Use when the user asks to contribute to, write for or add to Cosift, or invokes this skill by name. Reads the style guide and terms from Cosift first, asks the user to agree to the terms before joining, and sends only what the user has approved."
+    ]
+  ]
+}

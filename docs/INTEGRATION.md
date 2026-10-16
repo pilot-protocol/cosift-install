@@ -105,7 +105,10 @@ and do not launch more than one.
 ## 4. The state.json / onboarding.json asymmetry
 
 `${XDG_CONFIG_HOME:-$HOME/.config}/cosift/state.json` is yours. Shape
-`{version, account_uid, harnesses_configured[], onboarded:false, installed_at}`.
+`{version, account_uid, harnesses_configured[], onboarded:false, installed_at,
+onboarding_installed[], onboarding_cmd, cli_path, cli_sha256, cli_backup}`; the last three
+name the `cosift` binary the installer placed (empty strings when it placed none), and your
+uninstall should leave them as they are.
 
 - When `state.json` exists, `cosift-onboarding complete` read-modify-writes it in place. It
   sets only `onboarded`, `onboarded_at` and `onboarding_version`, preserves every other key

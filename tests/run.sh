@@ -78,6 +78,7 @@ CASE_TABLE=(
   "C56|closing-launch-offer|tester"
   "C57|claude-reset-guard-discriminates|tester"
   "C58|new-account-never-reuses-a-credential|tester"
+  "C59|contribute-skill-installed-replaced-and-removed|tester"
 )
 
 # =====================================================================
@@ -273,6 +274,9 @@ def state_check(path, csv_harnesses, version_hint, csv_onboarding="?"):
         "installed_at",
         "onboarding_installed",
         "onboarding_cmd",
+        "cli_path",
+        "cli_sha256",
+        "cli_backup",
     }
     got_keys = set(doc)
     if got_keys != want_keys:
@@ -317,6 +321,9 @@ def state_check(path, csv_harnesses, version_hint, csv_onboarding="?"):
         probs.append("onboarding_cmd must be a string")
     elif oi and not oc.endswith("/.local/bin/cosift-onboarding"):
         probs.append("onboarding_cmd %r is not the documented command path" % (oc,))
+    for key in ("cli_path", "cli_sha256", "cli_backup"):
+        if not isinstance(doc.get(key), str):
+            probs.append("%s must be a string" % key)
     ia = doc.get("installed_at")
     if not isinstance(ia, str) or not re.match(
         r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$", ia
@@ -965,6 +972,14 @@ onb_shared_parent() { # onb_shared_parent <harness>
     opencode) printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/commands" ;;
   esac
 }
+
+con_artifact() { onb_artifact "$1" | sed 's#cosift-onboarding#cosift-contribute#'; }
+
+con_source() {
+  onb_source "$1" | sed -e 's#/generated/#/contribute/generated/#' -e 's#cosift-onboarding#cosift-contribute#'
+}
+
+con_owned_dir() { onb_owned_dir "$1" | sed 's#cosift-onboarding#cosift-contribute#'; }
 
 onb_cmd() { printf '%s\n' "$HOME/.local/bin/cosift-onboarding"; }
 
@@ -2932,6 +2947,60 @@ $EMAIL
   install_notty --dry-run --yes --new-account
   chk_contains "dry-run says a new account" "$OUT" "a new account"
   chk_not_contains "dry-run does not offer to reuse" "$OUT" "would be reused"
+  mock_stop
+}
+case_C59() { # the contributor skill follows the harness config, and only its own file is touched
+  mock_start ok || return 1
+  set_paths
+  local h p
+  p=$(con_artifact claude)
+  mkdir -p "${p%/*}"
+  fixture onboarding/foreign.skill.md "$p"
+  local foreign_sha
+  foreign_sha=$(sha_of "$p")
+  mkdir -p "$HOME/work" && cd "$HOME/work" || return 1
+  install_notty --dry-run --yes --no-onboarding --harness=claude,codex,opencode
+  chk_eq "dry-run exit code" 0 "$RC"
+  chk_contains "dry-run names the contributor skill" "$OUT" "cosift-contribute"
+  chk_eq "dry-run left the foreign file alone" "$foreign_sha" "$(sha_of "$p")"
+
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --no-onboarding --harness=claude,codex,opencode
+  chk_eq "install exit code" 0 "$RC"
+  for h in claude codex opencode; do
+    chk_same_bytes "$h: skill matches the generated file" "$(con_artifact "$h")" "$(con_source "$h")"
+    chk_file_mode "$h: skill is 0644" "$(con_artifact "$h")" 644
+  done
+  chk_eq "the foreign claude file was backed up once" "$foreign_sha" \
+    "$(sha_of "$(find "${p%/*}" -name 'SKILL.md.cosift-backup-*' | head -1)")"
+  chk_contains "summary names the contributor skill" "$OUT" "cosift-contribute"
+  assert_onboarding_absent claude codex opencode
+
+  local b1
+  b1=$(backup_list | wc -l)
+  install_notty --yes --no-onboarding --harness=claude,codex,opencode
+  chk_eq "second run exit code" 0 "$RC"
+  chk_eq "second run made no backup" "$b1" "$(backup_list | wc -l)"
+
+  install_notty --uninstall
+  chk_eq "uninstall exit code" 0 "$RC"
+  for h in claude codex opencode; do
+    chk_exists "$h: skill is gone" "$(con_artifact "$h")" no
+    [ "$h" = codex ] && chk_exists "$h: owned dir is gone" "$(con_owned_dir "$h")" no
+    chk_exists "$h: the shared parent survives" "$(onb_shared_parent "$h")" yes
+  done
+
+  chk_eq "the claude backup of the foreign file survives the uninstall" "$foreign_sha" \
+    "$(sha_of "$(find "${p%/*}" -name 'SKILL.md.cosift-backup-*' | head -1)")"
+
+  PTY_LINES="$EMAIL
+123456"
+  install_pty --no-onboarding --no-contribute --harness=claude,codex,opencode
+  chk_eq "--no-contribute exit code" 0 "$RC"
+  for h in claude codex opencode; do
+    chk_exists "$h: --no-contribute wrote no skill" "$(con_artifact "$h")" no
+  done
   mock_stop
 }
 # =====================================================================

@@ -1,0 +1,28 @@
+{
+  "harness": "claude",
+  "output_relpath": "cosift-contribute/SKILL.md",
+  "install_path": "$HOME/.claude/skills/cosift-contribute/SKILL.md",
+  "owned_dir": "$HOME/.claude/skills/cosift-contribute",
+  "shared_parent": "$HOME/.claude/skills",
+  "invocation": "/cosift-contribute",
+  "verified": true,
+  "allowed_frontmatter_keys": [
+    "description",
+    "name",
+    "user-invocable"
+  ],
+  "frontmatter": [
+    [
+      "name",
+      "cosift-contribute"
+    ],
+    [
+      "description",
+      "Write an article for the Cosift wiki, or improve one, with the cosift_contribute tool. Use when the user asks to contribute to, write for or add to Cosift, or invokes this skill by name. Reads the style guide and terms from Cosift first, asks the user to agree to the terms before joining, and sends only what the user has approved."
+    ],
+    [
+      "user-invocable",
+      true
+    ]
+  ]
+}
